@@ -15,9 +15,10 @@ import os
 import time
 from collections.abc import Iterable, Iterator, Sequence
 from multiprocessing.connection import Connection
-from typing import Any
+from typing import Any, Callable, cast
 
 import joblib  # type: ignore[import-untyped]
+import numpy as np
 
 # TODO: My hash_table implementation
 from audfprint.core import analyzer, hash_table, matcher
@@ -93,6 +94,8 @@ def file_precompute_peaks_or_hashes(
     if skip_existing and os.path.isfile(opfname):
         return [f"file {opfname} exists (and --skip-existing); skipping"]
     # Do the analysis
+    saver: Callable[[str, Iterable[tuple[int, int]]], None]
+    output: np.ndarray[Any, Any] | list[tuple[int, int]]
     if hashes_not_peaks:
         feature_type = "hashes"
         saver = analyzer.hashes_save
@@ -100,7 +103,12 @@ def file_precompute_peaks_or_hashes(
     else:
         feature_type = "peaks"
         saver = analyzer.peaks_save
-        output = analyzer_obj.wavfile2peaks(filename)
+        peaks = analyzer_obj.wavfile2peaks(filename)
+        if peaks and isinstance(peaks[0], list):
+            peak_lists = cast(list[list[tuple[int, int]]], peaks)
+            output = [pair for peak_list in peak_lists for pair in peak_list]
+        else:
+            output = cast(list[tuple[int, int]], peaks)
     # save the hashes or peaks file
     if len(output) == 0:
         message = f"Zero length analysis for {filename} -- not saving."
@@ -108,7 +116,12 @@ def file_precompute_peaks_or_hashes(
         # Make sure the output directory exists
         ensure_dir(os.path.split(opfname)[0])
         # Write the file
-        saver(opfname, output)
+        save_data: Iterable[tuple[int, int]]
+        if isinstance(output, np.ndarray):
+            save_data = [(int(pair[0]), int(pair[1])) for pair in output.tolist()]
+        else:
+            save_data = output
+        saver(opfname, save_data)
         message = f"wrote {opfname}" + " ( %d %s, %.3f sec)" % (
             len(output),
             feature_type,
@@ -151,12 +164,16 @@ def make_ht_from_list(
     # Add in the files
     for filename in filelist:
         hashes = analyzer_obj.wavfile2hashes(filename)
-        ht.store(filename, hashes)
+        hash_pairs = [
+            (int(pair[0]), int(pair[1])) for pair in hashes.tolist()
+        ] if isinstance(hashes, np.ndarray) else list(hashes)
+        ht.store(filename, hash_pairs)
     # Pass back to caller
     if pipe:
         pipe.send(ht)
     else:
         return ht
+    return None
 
 
 def do_cmd(
@@ -174,6 +191,8 @@ def do_cmd(
         This is just the single-core versions.
     """
     if cmd in {'merge', 'newmerge'}:
+        if hash_tab is None:
+            raise ValueError("hash table required for merge")
         # files are other hash tables, merge them in
         for filename in filename_iter:
             hash_tab2 = hash_table.HashTable(filename)
@@ -185,6 +204,8 @@ def do_cmd(
             hash_tab.merge(hash_tab2)
 
     elif cmd == 'precompute':
+        if analyzer_obj is None:
+            raise ValueError("analyzer required for precompute")
         # just precompute fingerprints, single core
         for filename in filename_iter:
             logger.debug(
@@ -195,6 +216,8 @@ def do_cmd(
             )
 
     elif cmd == 'match':
+        if analyzer_obj is None or matcher_obj is None or hash_tab is None:
+            raise ValueError("analyzer, matcher, and hash table required for match")
         # Running query, single-core mode
         for num, filename in enumerate(filename_iter):
             msgs = matcher_obj.file_match_to_msgs(analyzer_obj, hash_tab, filename, num)
@@ -202,6 +225,8 @@ def do_cmd(
                 logger.debug(msg)
 
     elif cmd in {'new', 'add'}:
+        if analyzer_obj is None or hash_tab is None:
+            raise ValueError("analyzer and hash table required for add/new")
         # Adding files
         tothashes = 0
         for ix, filename in enumerate(filename_iter):
@@ -216,11 +241,15 @@ def do_cmd(
             f"({tothashes / float(analyzer_obj.soundfiletotaldur):.1f} hashes/sec)"
         )
     elif cmd == 'remove':
+        if hash_tab is None:
+            raise ValueError("hash table required for remove")
         # Removing files from hash table.
         for filename in filename_iter:
             hash_tab.remove(filename)
 
     elif cmd == 'list':
+        if hash_tab is None:
+            raise ValueError("hash table required for list")
         hash_tab.list(lambda x: logger.debug([x]))
 
     else:
@@ -238,29 +267,32 @@ def multiproc_add(
     # run ncores in parallel to add new files to existing HASH_TABLE
     # lists store per-process parameters
     # Pipes to transfer results
-    rx = [[] for _ in range(ncores)]
-    tx = [[] for _ in range(ncores)]
+    rx: list[Connection[Any, Any]] = []
+    tx: list[Connection[Any, Any]] = []
     # Process objects
-    pr = [[] for _ in range(ncores)]
+    pr: list[multiprocessing.Process] = []
     # Lists of the distinct files
-    filelists = [[] for _ in range(ncores)]
+    filelists: list[list[str]] = [[] for _ in range(ncores)]
     # unpack all the files into ncores lists
     for ix, filename in enumerate(filename_iter):
         filelists[ix % ncores].append(filename)
     # Launch each of the individual processes
     for ix in range(ncores):
-        rx[ix], tx[ix] = multiprocessing.Pipe(False)
-        pr[ix] = multiprocessing.Process(target=make_ht_from_list,
-                                         args=(analyzer_obj, filelists[ix],
-                                               hash_tab.hashbits,
-                                               hash_tab.depth,
-                                               (1 << hash_tab.maxtimebits),
-                                               tx[ix]))
-        pr[ix].start()
+        recv_conn, send_conn = multiprocessing.Pipe(False)
+        rx.append(recv_conn)
+        tx.append(send_conn)
+        process = multiprocessing.Process(target=make_ht_from_list,
+                                          args=(analyzer_obj, filelists[ix],
+                                                hash_tab.hashbits,
+                                                hash_tab.depth,
+                                                (1 << hash_tab.maxtimebits),
+                                                send_conn))
+        pr.append(process)
+        process.start()
     # gather results when they all finish
-    for core in range(ncores):
+    for core, recv_conn in enumerate(rx):
         # thread passes back serialized hash table structure
-        hash_tabx = rx[core].recv()
+        hash_tabx = recv_conn.recv()
         logger.debug(
             f"hash_table {core} has {len(hash_tabx.names)} files "
             f"{sum(hash_tabx.counts)} hashes"
@@ -296,6 +328,10 @@ def do_cmd_multiproc(
 ) -> None:
     """ Run the actual command, using multiple processors """
     if cmd in {'precompute', 'new', 'add'}:
+        if analyzer_obj is None:
+            raise ValueError("analyzer required for multiprocess operations")
+        if cmd in {'new', 'add'} and hash_tab is None:
+            raise ValueError("hash table required for add/new")
         # precompute fingerprints with joblib
         msgslist = joblib.Parallel(n_jobs=ncores)(
                 joblib.delayed(file_precompute)(
@@ -309,6 +345,8 @@ def do_cmd_multiproc(
             logger.debug(msgs)
 
     elif cmd == 'match':
+        if analyzer_obj is None or matcher_obj is None or hash_tab is None:
+            raise ValueError("analyzer, matcher, and hash table required for match")
         # Running queries in parallel
         msgslist = joblib.Parallel(n_jobs=ncores)(
                 # Would use matcher.file_match_to_msgs(), but you
@@ -323,6 +361,8 @@ def do_cmd_multiproc(
     elif cmd in {'new', 'add'}:
         # We add by forking multiple parallel threads each running
         # analyzers over different subsets of the file list
+        if analyzer_obj is None or hash_tab is None:
+            raise ValueError("analyzer and hash table required for add/new")
         multiproc_add(analyzer_obj, hash_tab, filename_iter, report, ncores)
 
     else:

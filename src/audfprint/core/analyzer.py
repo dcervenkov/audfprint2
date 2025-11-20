@@ -15,10 +15,11 @@ import os
 import struct
 import time
 from collections.abc import Iterable, Sequence
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
-import scipy.signal
+import scipy  # type: ignore[import-untyped]
+import scipy.signal  # type: ignore[import-untyped]
 
 # For utility, glob2hashtable
 from audfprint.core import hash_table
@@ -120,9 +121,9 @@ class Analyzer(object):
     # Parameters
 
     # optimization: cache pre-calculated Gaussian profile
-    __sp_width = None
-    __sp_len = None
-    __sp_vals = []
+    __sp_width: float | None = None
+    __sp_len: int | None = None
+    __sp_vals: np.ndarray = np.array([])
 
     def __init__(self, density: float = DENSITY) -> None:
         self.density = density
@@ -184,24 +185,27 @@ class Analyzer(object):
             the maximum across all the scaled Gaussians
         """
         if base is None:
-            vec = np.zeros(npoints)
+            if npoints is None:
+                raise ValueError("npoints must be provided when base is None")
+            npoints_int = npoints
+            vec = np.zeros(npoints_int)
         else:
-            npoints = len(base)
+            npoints_int = len(base)
             vec = np.copy(base)
         # binvals = np.arange(len(vec))
         # for pos, val in peaks:
         #   vec = np.maximum(vec, val*np.exp(-0.5*(((binvals - pos)
         #                                /float(width))**2)))
-        if width != self.__sp_width or npoints != self.__sp_len:
+        if width != self.__sp_width or npoints_int != self.__sp_len:
             # Need to calculate new vector
             self.__sp_width = width
-            self.__sp_len = npoints
-            self.__sp_vals = np.exp(-0.5 * ((np.arange(-npoints, npoints + 1)
+            self.__sp_len = npoints_int
+            self.__sp_vals = np.exp(-0.5 * ((np.arange(-npoints_int, npoints_int + 1)
                                              / width)**2))
         # Now the actual function
         for pos, val in peaks:
-            vec = np.maximum(vec, val * self.__sp_vals[np.arange(npoints)
-                                                       + npoints - pos])
+            vec = np.maximum(vec, val * self.__sp_vals[np.arange(npoints_int)
+                                                       + npoints_int - pos])
         return vec
 
     def _decaying_threshold_fwd_prune(self, sgram: np.ndarray, a_dec: float) -> np.ndarray:
@@ -314,7 +318,7 @@ class Analyzer(object):
         peaks = self._decaying_threshold_bwd_prune_peaks(sgram, peaks, a_dec)
         # build a list of peaks we ended up with
         scols = np.shape(sgram)[1]
-        pklist = []
+        pklist: list[tuple[int, int]] = []
         for col in range(scols):
             pklist.extend((col, bin_) for bin_ in np.nonzero(peaks[:, col])[0])
         return pklist
@@ -330,12 +334,12 @@ class Analyzer(object):
             Return a list of (col, peak, peak2, col2-col) landmark descriptors.
         """
         # Form pairs of peaks into landmarks
-        landmarks = []
+        landmarks: list[tuple[int, int, int, int]] = []
         if len(pklist) > 0:
             # Find column of the final peak in the list
             scols = pklist[-1][0] + 1
             # Convert (col, bin) list into peaks_at[col] lists
-            peaks_at = [[] for _ in range(scols)]
+            peaks_at: list[list[int]] = [[] for _ in range(scols)]
             for (col, bin_) in pklist:
                 peaks_at[col].append(bin_)
 
@@ -364,6 +368,7 @@ class Analyzer(object):
             shifts > 1 causes hashes to be extracted from multiple shifts of
             waveform, to reduce frame effects.  """
         ext = os.path.splitext(filename)[1]
+        peaks: list[tuple[int, int]] | list[list[tuple[int, int]]]
         if ext == PRECOMPPKEXT:
             # short-circuit - precomputed fingerprint file
             peaks = peaks_load(filename)
@@ -378,7 +383,7 @@ class Analyzer(object):
                     logger.exception(e)
                     raise IOError(message) from e
                 logger.debug(message, "skipping")
-                d = []
+                d = np.array([], dtype=float)
                 sr = self.target_sr
             # Store duration in a global because it's hard to handle
             dur = len(d) / sr
@@ -386,7 +391,7 @@ class Analyzer(object):
                 peaks = self.find_peaks(d, sr)
             else:
                 # Calculate hashes with optional part-frame shifts
-                peaklists = []
+                peaklists: list[list[tuple[int, int]]] = []
                 for shift in range(shifts):
                     shiftsamps = int(shift / self.shifts * self.n_hop)
                     peaklists.append(self.find_peaks(d[shiftsamps:], sr))
@@ -406,7 +411,7 @@ class Analyzer(object):
         ext = os.path.splitext(filename)[1]
         if ext == PRECOMPEXT:
             # short-circuit - precomputed fingerprint file
-            hashes = hashes_load(filename)
+            hashes = np.array(hashes_load(filename), dtype=np.int32)
             dur = np.max(hashes, axis=0)[0] * self.n_hop / self.target_sr
             # instrumentation to track total amount of sound processed
             self.soundfiledur = dur
@@ -415,18 +420,22 @@ class Analyzer(object):
         else:
             peaks = self.wavfile2peaks(filename, self.shifts)
             if len(peaks) == 0:
-                return []
+                return np.zeros((0, 2), dtype=np.int32)
             # Did we get returned a list of lists of peaks due to shift?
             if isinstance(peaks[0], list):
-                peaklists = peaks
-                query_hashes = []
-                query_hashes.extend(
+                peaklists = cast(list[list[tuple[int, int]]], peaks)
+                peak_arrays = [
                     landmarks2hashes(self.peaks2landmarks(peaklist))
                     for peaklist in peaklists
+                ]
+                query_hashes = (
+                    np.concatenate(peak_arrays)
+                    if len(peak_arrays) > 0
+                    else np.zeros((0, 2), dtype=np.int32)
                 )
-                query_hashes = np.concatenate(query_hashes)
             else:
-                query_hashes = landmarks2hashes(self.peaks2landmarks(peaks))
+                peak_pairs = cast(list[tuple[int, int]], peaks)
+                query_hashes = landmarks2hashes(self.peaks2landmarks(peak_pairs))
 
             # Remove duplicates by merging each row into a single value.
             hashes_hashes = (((query_hashes[:, 0].astype(np.uint64)) << 32)
@@ -467,7 +476,10 @@ class Analyzer(object):
         #                                                     n_fft=n_fft,
         #                                                     n_hop=n_hop)))
         hashes = self.wavfile2hashes(filename)
-        hashtable.store(filename, hashes)
+        hashtable.store(
+            filename,
+            [(int(time_), int(hash_)) for time_, hash_ in hashes.tolist()],
+        )
         # return (len(d)/float(sr), len(hashes))
         # return (np.max(hashes, axis=0)[0]*n_hop/float(sr), len(hashes))
         # soundfiledur is set up in wavfile2hashes, use result here
@@ -498,7 +510,7 @@ def hashes_load(hashfilename: str) -> list[tuple[int, int]]:
     with open(hashfilename, 'rb') as f:
         magic = f.read(len(HASH_MAGIC))
         if magic != HASH_MAGIC:
-            raise IOError(f'{hashfilename} is not a hash file (magic {magic})')
+            raise IOError(f'{hashfilename} is not a hash file (magic {magic!r})')
         data = f.read(fmtsize)
         while data is not None and len(data) == fmtsize:
             hashes.append(struct.unpack(HASH_FMT, data))
@@ -521,7 +533,7 @@ def peaks_load(peakfilename: str) -> list[tuple[int, int]]:
     with open(peakfilename, 'rb') as f:
         magic = f.read(len(PEAK_MAGIC))
         if magic != PEAK_MAGIC:
-            raise IOError(f'{peakfilename} is not a peak file (magic {magic})')
+            raise IOError(f'{peakfilename} is not a peak file (magic {magic!r})')
         data = f.read(fmtsize)
         while data is not None and len(data) == fmtsize:
             peaks.append(struct.unpack(PEAK_FMT, data))
@@ -532,7 +544,7 @@ def peaks_load(peakfilename: str) -> list[tuple[int, int]]:
 # ####### function signature for Gordon feature extraction
 # ####### which stores the precalculated hashes for each track separately
 
-extract_features_analyzer = None
+extract_features_analyzer: Analyzer | None = None
 
 
 def extract_features(track_obj: Any, *args: Any, **kwargs: Any) -> np.ndarray:
@@ -550,18 +562,22 @@ def extract_features(track_obj: Any, *args: Any, **kwargs: Any) -> np.ndarray:
         extract_features_analyzer = Analyzer()
 
     density = kwargs.get("density", None)
+    if density is not None:
+        extract_features_analyzer.density = float(density)
     n_fft = kwargs.get("n_fft", None)
+    if n_fft is not None:
+        extract_features_analyzer.n_fft = int(n_fft)
     n_hop = kwargs.get("n_hop", None)
+    if n_hop is not None:
+        extract_features_analyzer.n_hop = int(n_hop)
     sr = kwargs.get("sr", None)
-    extract_features_analyzer.density = density
-    extract_features_analyzer.n_fft = n_fft
-    extract_features_analyzer.n_hop = n_hop
-    extract_features_analyzer.target_sr = sr
+    if sr is not None:
+        extract_features_analyzer.target_sr = int(sr)
     return extract_features_analyzer.wavfile2hashes(track_obj.fn_audio)
 
 
 # Handy function to build a new hash table from a file glob pattern
-g2h_analyzer = None
+g2h_analyzer: Analyzer | None = None
 
 
 def glob2hashtable(pattern: str, density: float = 20.0) -> hash_table.HashTable:
@@ -572,7 +588,7 @@ def glob2hashtable(pattern: str, density: float = 20.0) -> hash_table.HashTable:
 
     ht = hash_table.HashTable()
     filelist = glob.glob(pattern)
-    initticks = time.clock()
+    initticks = time.perf_counter()
     totdur = 0.0
     tothashes = 0
     for ix, file_ in enumerate(filelist):
@@ -580,7 +596,7 @@ def glob2hashtable(pattern: str, density: float = 20.0) -> hash_table.HashTable:
         dur, nhash = g2h_analyzer.ingest(ht, file_)
         totdur += dur
         tothashes += nhash
-    elapsedtime = time.clock() - initticks
+    elapsedtime = time.perf_counter() - initticks
     logger.debug("Added", tothashes, "(", tothashes / totdur, "hashes/sec) at ",
           elapsedtime / totdur, "x RT")
     return ht

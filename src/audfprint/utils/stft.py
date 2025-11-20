@@ -4,6 +4,8 @@ This implementation is based on routines from
 https://github.com/tensorflow/models/blob/master/research/audioset/mel_features.py
 """
 
+from typing import Literal
+
 import numpy as np
 
 
@@ -87,7 +89,7 @@ def stft(
   if not hop_length:
     hop_length = window_length // 2
   # Default librosa STFT behavior.
-  pad_mode = 'reflect'
+  pad_mode: Literal['reflect'] = 'reflect'
   signal = np.pad(signal, (n_fft // 2), mode=pad_mode)
   frames = frame(signal, window_length, hop_length)
   # Apply frame window to each frame. We use a periodic Hann (cosine of period

@@ -15,13 +15,13 @@ import math
 import os
 import pickle
 import random
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from enum import Enum
-from typing import IO
+from typing import IO, Any
 
-import h5py
+import h5py  # type: ignore[import-untyped]
 import numpy as np
-import scipy.io
+import scipy.io  # type: ignore[import-untyped]
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("audfprint")
@@ -96,11 +96,11 @@ class HashTable(object):
             # keep track of number of entries in each list
             self.counts = np.zeros(size, dtype=np.int32)
             # map names to IDs
-            self.names = []
+            self.names: list[str | None] = []
             # track number of hashes stored per id
             self.hashesperid = np.zeros(0, np.uint32)
             # Empty params
-            self.params = {}
+            self.params: dict[str, Any] = {}
             # Record the current version
             self.ht_version = HT_VERSION
             # Mark as unsaved
@@ -114,7 +114,7 @@ class HashTable(object):
         self.hashesperid.resize(0)
         self.dirty = True
 
-    def store(self, name: str | int, timehashpairs: Iterable[tuple[int, int]]) -> None:
+    def store(self, name: str | int, timehashpairs: Sequence[tuple[int, int]]) -> None:
         """Store a list of hashes in the hash table
         associated with a particular name (or integer ID) and time.
         """
@@ -168,7 +168,7 @@ class HashTable(object):
         associate with the given hash as rows.
         """
         vals = self.table[hash_, : min(self.depth, self.counts[hash_])]
-        maxtimemask = (1 << self.matimebits) - 1
+        maxtimemask = (1 << self.maxtimebits) - 1
         # ids we report externally start at 0, but in table they start at 1.
         ids = (vals >> self.maxtimebits) - 1
         return np.c_[ids, vals & maxtimemask].astype(np.int32)
@@ -207,7 +207,7 @@ class HashTable(object):
         params: dict | None = None,
         file_object: IO[bytes] | None = None,
         save_type: DatabaseType | str | None = None,
-    ) -> None:
+    ) -> str:
         base, ext = os.path.splitext(name)
         ext = ext.lower()
 
@@ -346,7 +346,7 @@ class HashTable(object):
     ) -> None:
         """Read hash table values from pickle file <name>."""
         f = file_object or zlib.open(name, "rb")
-        temp = pickle.load(f, **pickle_options)
+        temp = pickle.load(f, encoding=pickle_options["encoding"])
         if temp.ht_version < HT_OLD_COMPAT_VERSION:
             raise ValueError(
                 f"Version of {name} is {str(temp.ht_version)} which is not at least {str(HT_OLD_COMPAT_VERSION)}"
@@ -402,7 +402,7 @@ class HashTable(object):
         assert params["nojenkins"]
         self.table = mht["HashTable"].T
         self.counts = mht["HashTableCounts"][0]
-        self.names = [str(val[0]) if len(val) > 0 else [] for val in mht["HashTableNames"][0]]
+        self.names = [str(val[0]) if len(val) > 0 else None for val in mht["HashTableNames"][0]]
         self.hashesperid = np.array(mht["HashTableLengths"][0]).astype(np.uint32)
         # Matlab uses 1-origin for the IDs in the hashes, but the Python code
         # also skips using id_ 0, so that names[0] corresponds to id_ 1.
@@ -412,7 +412,7 @@ class HashTable(object):
 
     def totalhashes(self) -> int:
         """Return the total count of hashes stored in the table"""
-        return np.sum(self.counts)
+        return int(np.sum(self.counts))
 
     def merge(self, ht: "HashTable") -> None:
         """Merge in the results from another hash table"""
@@ -476,10 +476,11 @@ class HashTable(object):
         hashes_removed = 0
         for hash_ in np.nonzero(np.max(id_in_table, axis=1))[0]:
             vals = self.table[hash_, : self.counts[hash_]]
-            vals = [v for v, x in zip(vals, id_in_table[hash_], strict=False) if not x]
-            self.table[hash_] = np.hstack([vals, np.zeros(self.depth - len(vals))])
+            filtered_vals = [v for v, x in zip(vals, id_in_table[hash_], strict=False) if not x]
+            vals_array = np.array(filtered_vals)
+            self.table[hash_] = np.hstack([vals_array, np.zeros(self.depth - len(vals_array))])
             # This will forget how many extra hashes we had dropped until now.
-            self.counts[hash_] = len(vals)
+            self.counts[hash_] = len(filtered_vals)
             hashes_removed += np.sum(id_in_table[hash_])
         self.names[id_] = None
         self.hashesperid[id_] = 0

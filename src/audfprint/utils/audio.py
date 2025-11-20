@@ -33,18 +33,14 @@ import threading
 import time
 from collections.abc import Iterator
 from types import TracebackType
-from typing import IO
+from typing import IO, Literal
 
 import numpy as np
 
 # For wavread fallback.
-import scipy.io.wavfile as wav
+import scipy.io.wavfile as wav  # type: ignore[import-untyped]
 
-try:
-    import queue
-except ImportError:
-    # noinspection PyUnresolvedReferences
-    import Queue as queue
+import queue
 
 
 # If ffmpeg is unavailable, you can set HAVE_FFMPEG to False which will cause
@@ -91,18 +87,20 @@ def audio_read_ffmpeg(
     offset = 0.0
     duration = None
     dtype = np.float32
-    y = []
+    frames: list[np.ndarray] = []
     with FFmpegAudioFile(os.path.realpath(filename), sample_rate=sr, channels=channels) as input_file:
         sr = input_file.sample_rate
         channels = input_file.channels
+        if sr is None or channels is None:
+            raise ValueError("Sample rate or channels could not be determined.")
         s_start = int(np.floor(sr * offset) * channels)
         if duration is None:
             s_end = np.inf
         else:
             s_end = s_start + int(np.ceil(sr * duration) * channels)
         num_read = 0
-        for frame in input_file:
-            frame = buf_to_float(frame, dtype=dtype)
+        for frame_bytes in input_file:
+            frame = buf_to_float(frame_bytes, dtype=dtype)
             num_read_prev = num_read
             num_read += len(frame)
             if num_read < s_start:
@@ -113,18 +111,18 @@ def audio_read_ffmpeg(
                 break
             if s_end < num_read:
                 # the end is in this frame.  crop.
-                frame = frame[: s_end - num_read_prev]
+                frame = frame[: int(s_end - num_read_prev)]
             if num_read_prev <= s_start < num_read:
                 # beginning is in this frame
                 frame = frame[(s_start - num_read_prev) :]
             # tack on the current frame
-            y.append(frame)
+            frames.append(frame)
 
-        if not len(y):
+        if not len(frames):
             # Zero-length read
             y = np.zeros(0, dtype=dtype)
         else:
-            y = np.concatenate(y)
+            y = np.concatenate(frames)
             if channels > 1:
                 y = y.reshape((-1, 2)).T
 
@@ -195,7 +193,7 @@ class QueueReaderThread(threading.Thread):
         self.blocksize = blocksize
         self.daemon = True
         self.discard = discard
-        self.queue: queue.Queue | None = None if discard else queue.Queue()
+        self.queue: queue.Queue[bytes] = queue.Queue()
 
     def run(self) -> None:
         while True:
@@ -231,6 +229,8 @@ class FFmpegAudioFile(object):
 
         # Start another thread to consume the standard output of the
         # process, which contains raw audio data.
+        if self.proc.stdout is None:
+            raise ValueError("stdout stream unavailable")
         self.stdout_reader = QueueReaderThread(self.proc.stdout, block_size)
         self.stdout_reader.start()
 
@@ -243,6 +243,8 @@ class FFmpegAudioFile(object):
         # Start a separate thread to read the rest of the data from
         # stderr. This (a) avoids filling up the OS buffer and (b)
         # collects the error output for diagnosis.
+        if self.proc.stderr is None:
+            raise ValueError("stderr stream unavailable")
         self.stderr_reader = QueueReaderThread(self.proc.stderr)
         self.stderr_reader.start()
 
@@ -268,7 +270,9 @@ class FFmpegAudioFile(object):
                     if end_time - start_time >= timeout:
                         # Nothing interesting has happened for a while --
                         # FFmpeg is probably hanging.
-                        raise ValueError(f'ffmpeg output: {"".join(self.stderr_reader.queue.queue)}') from err
+                        raise ValueError(
+                            f'ffmpeg output: {b"".join(self.stderr_reader.queue.queue).decode("utf8", "ignore")}'
+                        ) from err
                     start_time = end_time
                     # Keep waiting.
                     continue
@@ -277,16 +281,17 @@ class FFmpegAudioFile(object):
         """Reads the tool's output from its stderr stream, extracts the
         relevant information, and parses it.
         """
+        if self.proc.stderr is None:
+            raise ValueError("stderr stream unavailable")
+        stderr = self.proc.stderr
         out_parts = []
         while True:
-            line = self.proc.stderr.readline()
-            if not line:
+            line_bytes = stderr.readline()
+            if not line_bytes:
                 # EOF and data not found.
                 raise ValueError("stream info not found")
 
-            # In Python 3, result of reading from stderr is bytes.
-            if isinstance(line, bytes):
-                line = line.decode("utf8", "ignore")
+            line = line_bytes.decode("utf8", "ignore")
 
             line = line.strip().lower()
 
@@ -356,6 +361,6 @@ class FFmpegAudioFile(object):
         exc_type: type[BaseException] | None,
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
-    ) -> bool:
+    ) -> Literal[False]:
         self.close()
         return False

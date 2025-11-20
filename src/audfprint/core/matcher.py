@@ -12,8 +12,9 @@ import os
 import time
 
 import numpy as np
-import psutil
-import scipy.signal
+import psutil  # type: ignore[import-untyped]
+import scipy.signal  # type: ignore[import-untyped]
+from typing import cast
 
 # Don't sweat failure to import graphics support.
 with contextlib.suppress(Exception):
@@ -292,6 +293,7 @@ class Matcher(object):
         sorted_hits = hits[hits[:, 3].argsort()]
         allids = sorted_hits[:, 0].astype(int)
         alltimes = sorted_hits[:, 1].astype(int)
+        window = int(self.window)
         # Make sure every value in alltimes is >=0 for bincount
         mintime = np.amin(alltimes)
         alltimes -= mintime
@@ -308,13 +310,14 @@ class Matcher(object):
             filtered_bincounts = keep_local_maxes(bincounts)
             found_this_id = 0
             while still_looking:
-                mode = np.argmax(filtered_bincounts)
+                mode = int(np.argmax(filtered_bincounts))
                 if filtered_bincounts[mode] <= self.threshcount:
                     # Too few - skip to the next id
                     still_looking = False
                     continue
-                count = np.sum(bincounts[max(0, mode - self.window):
-                                         (mode + self.window + 1)])
+                start = max(0, mode - window)
+                stop = mode + window + 1
+                count = np.sum(bincounts[start:stop])
                 if self.find_time_range:
                     min_time, max_time = self._calculate_time_ranges(
                             sorted_hits, track_id, mode + mintime)
@@ -390,7 +393,7 @@ class Matcher(object):
                      time.ctime(), numberstring, filename, durd, len(q_hashes))
 
         # Run query
-        rslts = self.match_hashes(ht, q_hashes)
+        rslts = cast(np.ndarray, self.match_hashes(ht, q_hashes))
         # Post filtering
         if self.sort_by_time:
             rslts = rslts[(-rslts[:, 2]).argsort(), :]
@@ -471,8 +474,10 @@ class Matcher(object):
         if self.sort_by_time:
             results = sorted(results, key=lambda x: -x[2])
         # Convert the hashes to landmarks
-        lms = analyzer.hashes2landmarks(q_hashes)
-        mlms = analyzer.hashes2landmarks(matchhashes)
+        q_hashes_list = [(int(time_), int(hash_)) for time_, hash_ in q_hashes]
+        match_hashes_list = [(int(time_), int(hash_)) for time_, hash_ in matchhashes]
+        lms = analyzer.hashes2landmarks(q_hashes_list)
+        mlms = analyzer.hashes2landmarks(match_hashes_list)
         # Overplot on the spectrogram
         time_scale = analyzer_obj.n_hop / float(sr)
         freq_scale = float(sr)/analyzer_obj.n_fft
@@ -501,8 +506,8 @@ def localtest() -> None:
     qry = 'query.mp3'
     hash_tab = analyzer.glob2hashtable(pat)
     matcher = Matcher()
-    rslts, dur, nhash = matcher.match_file(analyzer.g2h_analyzer,
-                                           hash_tab, qry)
+    g2h = cast(analyzer.Analyzer, analyzer.g2h_analyzer)
+    rslts, dur, nhash = matcher.match_file(g2h, hash_tab, qry)
     t_hop = 0.02322
     logger.debug(
         f"Matched {qry} ({dur} s, {nhash} hashes) as "
