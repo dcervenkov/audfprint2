@@ -6,25 +6,28 @@ Fingerprint matching code for audfprint
 
 2014-05-26 Dan Ellis dpwe@ee.columbia.edu
 """
-from loguru import logger
 
+import contextlib
 import os
 import time
 
-import psutil
 import numpy as np
+import psutil
 import scipy.signal
 
 # Don't sweat failure to import graphics support.
-try:
-    import matplotlib.pyplot as plt
+with contextlib.suppress(Exception):
     import librosa.display
-except:
-    pass
+    import matplotlib.pyplot as plt
+import logging
 
 import audfprint_analyze
 import audio_read
 import stft
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("audfprint")
+TRACE_LEVEL = logging.DEBUG - 5
 
 
 def process_info():
@@ -41,7 +44,8 @@ def process_info():
 
 def log(message):
     """ log info with stats """
-    logger.debug('%s physmem=%s utime=%s %s' % (time.ctime(), process_info()))
+    rss, usrtime = process_info()
+    logger.debug(f'{time.ctime()} physmem={rss} utime={usrtime} {message}')
 
 
 def encpowerof2(val):
@@ -62,10 +66,7 @@ def locmax(vec, indices=False):
     nbr[0] = True
     nbr[1:-1] = np.greater_equal(vec[1:], vec[:-1])
     maxmask = (nbr[:-1] & ~nbr[1:])
-    if indices:
-        return np.nonzero(maxmask)[0]
-    else:
-        return maxmask
+    return np.nonzero(maxmask)[0] if indices else maxmask
 
 
 def keep_local_maxes(vec):
@@ -165,9 +166,7 @@ class Matcher(object):
         matchhasheshash = np.unique(allotimes[matchix]
                                     + (allhashes[matchix] << timebits))
         timemask = (1 << timebits) - 1
-        matchhashes = np.c_[matchhasheshash & timemask,
-                            matchhasheshash >> timebits]
-        return matchhashes
+        return np.c_[matchhasheshash & timemask, matchhasheshash >> timebits]
 
     def _calculate_time_ranges(self, hits, id, mode):
         """Given the id and mode, return the actual time support.
@@ -208,7 +207,7 @@ class Matcher(object):
         # Slower, old process for exact match counts
         allids = sorted_hits[:, 0]
         alltimes = sorted_hits[:, 1]
-        allhashes = sorted_hits[:, 2]
+        # allhashes = sorted_hits[:, 2]
         # allotimes = sorted_hits[:, 3]
         # Allocate enough space initially for 4 modes per hit
         maxnresults = len(ids) * 4
@@ -332,23 +331,12 @@ class Matcher(object):
                                                hashesfor)
         # Sort results by filtered count, descending
         results = results[(-results[:, 1]).argsort(),]
-        # Where was our best hit in the unfiltered count ranking?
-        # (4th column is rank in original list; look at top hit)
-        # if np.shape(results)[0] > 0:
-        #    bestpos = results[0, 4]
-        #    print "bestpos =", bestpos
-        # Could use to collect stats on best search-depth to use...
-
-        # Now strip the final column (original raw-count-based rank)
-        # results = results[:, :4]
-
         if hashesfor is None:
             return results
-        else:
-            id = results[hashesfor, 0]
-            mode = results[hashesfor, 2]
-            hashesforhashes = self._unique_match_hashes(id, hits, mode)
-            return results, hashesforhashes
+        id = results[hashesfor, 0]
+        mode = results[hashesfor, 2]
+        hashesforhashes = self._unique_match_hashes(id, hits, mode)
+        return results, hashesforhashes
 
     def match_file(self, analyzer, ht, filename, number=None):
         """ Read in an audio file, calculate its landmarks, query against
@@ -363,13 +351,9 @@ class Matcher(object):
         else:
             durd = analyzer.n_hop * q_hashes[-1][0] / analyzer.target_sr
 
-        if number is not None:
-            numberstring = "#%d" % number
-        else:
-            numberstring = ""
-        logger.trace(time.ctime(), "Analyzed", numberstring, filename, "of",
-              ('%.3f' % durd), "s "
-                               "to", len(q_hashes), "hashes")
+        numberstring = "#%d" % number if number is not None else ""
+        logger.debug("%s Analyzed %s %s of %.3f s to %d hashes",
+                     time.ctime(), numberstring, filename, durd, len(q_hashes))
 
         # Run query
         rslts = self.match_hashes(ht, q_hashes)
@@ -381,15 +365,10 @@ class Matcher(object):
     def file_match_to_msgs(self, analyzer, ht, qry, number=None):
         """ Perform a match on a single input file, return list
             of message strings """
-        current_log_level = logger._core.min_level
-
         rslts, dur, nhash = self.match_file(analyzer, ht, qry, number)
         t_hop = analyzer.n_hop / analyzer.target_sr
-        if current_log_level < 5: # if current level is TRACE or more
-            qrymsg = f"{qry} {dur:.1f} sec {nhash} raw hashes"
-        else:
-            qrymsg = qry
-
+        show_verbose = logger.isEnabledFor(logging.DEBUG)
+        qrymsg = f"{qry} {dur:.1f} sec {nhash} raw hashes" if show_verbose else qry
         msgrslt = []
         if len(rslts) == 0:
             # No matches returned at all
@@ -399,10 +378,14 @@ class Matcher(object):
             for (tophitid, nhashaligned, aligntime, nhashraw, rank,
                  min_time, max_time) in rslts:
                 # figure the number of raw and aligned matches for top hit
-                if current_log_level < 5: # if current level is TRACE or more
+                if show_verbose:
                     if self.find_time_range:
-                        msg = (f"Matched {(max_time - min_time) * t_hop:6.1f} s starting at {min_time * t_hop:6.1f} s in {qry}"
-                               f" to time {(min_time + aligntime) * t_hop:6.1f} s in {str(ht.names[tophitid])}")
+                        msg = (
+                            f"Matched {(max_time - min_time) * t_hop:6.1f} s "
+                            f"starting at {min_time * t_hop:6.1f} s in {qry}"
+                            f" to time {(min_time + aligntime) * t_hop:6.1f} s "
+                            f"in {str(ht.names[tophitid])}"
+                        )
                     else:
                         msg = f"Matched {qrymsg} as {str(ht.names[tophitid])} at {aligntime * t_hop:6.1f} s"
                     msg += f" with {nhashaligned:5d} of {nhashraw:5d} common hashes at rank {rank:2d}"
@@ -455,9 +438,12 @@ class Matcher(object):
                  freq_scale * np.array([[x[1], x[2]] for x in mlms]).T,
                  '.-r')
         # Add title
-        plt.title(filename + " : Matched as " + ht.names[results[0][0]]
-                  + (" with %d of %d hashes" % (len(matchhashes),
-                                                len(q_hashes))))
+        plt.title(
+            (
+                f"{filename} : Matched as {ht.names[results[0][0]]}"
+                + " with %d of %d hashes" % (len(matchhashes), len(q_hashes))
+            )
+        )
         # Display
         plt.show()
         # Return
@@ -473,7 +459,11 @@ def localtest():
     rslts, dur, nhash = matcher.match_file(audfprint_analyze.g2h_analyzer,
                                            hash_tab, qry)
     t_hop = 0.02322
-    logger.debug(f"Matched {qry} ({dur} s, {nhash} hashes) as {hash_tab.names[rslts[0][0]]} at {t_hop * float(rslts[0][2])} with {rslts[0][1]} of {rslts[0][3]} hashes")
+    logger.debug(
+        f"Matched {qry} ({dur} s, {nhash} hashes) as "
+        f"{hash_tab.names[rslts[0][0]]} at {t_hop * float(rslts[0][2])} "
+        f"with {rslts[0][1]} of {rslts[0][3]} hashes"
+    )
 
 
 # Run the main function if called from the command line

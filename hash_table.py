@@ -7,25 +7,27 @@ used for the audfprint fingerprinter.
 
 2014-05-25 Dan Ellis dpwe@ee.columbia.edu
 """
-from loguru import logger
 
-import gzip
-import math
-import os
 # import zlib
 import gzip as zlib
-from enum import Enum
 import json
-import h5py
+import logging
+import math
+import os
+import pickle
 import random
-import sys
+from enum import Enum
 
+import h5py
 import numpy as np
 import scipy.io
 
-import pickle
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("audfprint")
+
 basestring = (str, bytes)
 pickle_options = {'encoding': 'latin1'}
+
 
 class DatabaseType(Enum):
     PKL = "PKL"
@@ -58,7 +60,10 @@ class HashTable(object):
        >>> ht.store('identifier', list_of_landmark_time_hash_pairs)
        >>> list_of_ids_tracks = ht.get_hits(hash)
     """
-    __slots__ = ("hashbits", "depth", "maxtimebits", "table" , "counts", "names", "hashesperid", "params", "ht_version", "dirty")
+    __slots__ = (
+        "hashbits", "depth", "maxtimebits", "table", "counts", "names",
+        "hashesperid", "params", "ht_version", "dirty"
+    )
 
     def __init__(self, filename=None, hashbits=20, depth=100, maxtime=16384):
         """ allocate an empty hash table of the specified size """
@@ -180,19 +185,25 @@ class HashTable(object):
         return hits
 
     def save(self, name, params=None, file_object=None, save_type=None):
+        base, ext = os.path.splitext(name)
+        ext = ext.lower()
+
         if not save_type:
-            save_type = DatabaseType.HDF
-        
+            if ext == ".hdf":
+                save_type = DatabaseType.HDF
+            elif ext in (".pkl", ".pklz"):
+                save_type = DatabaseType.PKL
+            else:
+                save_type = DatabaseType.HDF
+
         if save_type == DatabaseType.HDF or save_type == DatabaseType.HDF.value:
-            if not os.path.splitext(name)[1] or os.path.splitext(name)[1] != ".hdf":
-                name = f"{name}.hdf"
-
-            save_result = self.save_hdf(name)
+            if ext != ".hdf":
+                name = f"{base}.hdf"
+            self.save_hdf(name)
         elif save_type == DatabaseType.PKL or save_type == DatabaseType.PKL.value:
-            if not os.path.splitext(name)[1] or os.path.splitext(name)[1] != ".pkl":
-                name = f"{name}.pkl"
-
-            save_result = self.save_pkl(name)
+            if ext not in (".pkl", ".pklz"):
+                name = f"{base}.pklz"
+            self.save_pkl(name)
         else:
             raise ValueError(f"Unknown database type or doesn't support to export: {save_type}")
 
@@ -200,7 +211,11 @@ class HashTable(object):
         nhashes = sum(self.counts)
         # Report the proportion of dropped hashes (overfull table)
         dropped = nhashes - sum(np.minimum(self.depth, self.counts))
-        logger.debug(f"Saved fprints for {sum(n is not None for n in self.names)} files ({nhashes} hashes) to {name} ({100.0 * dropped / max(1, nhashes):.2f}% dropped)")
+        logger.debug(
+            f"Saved fprints for {sum(n is not None for n in self.names)} files "
+            f"({nhashes} hashes) to {name} "
+            f"({100.0 * dropped / max(1, nhashes):.2f}% dropped)"
+        )
 
         return name
 
@@ -218,7 +233,7 @@ class HashTable(object):
             f = zlib.open(name, 'wb')
 
         pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
-        
+
 
     def save_hdf(self, name, params=None, file_object=None):
         """ Save hash table to file <name>,
@@ -245,20 +260,20 @@ class HashTable(object):
         temp.create_dataset('counts', data=self.counts)
         temp.create_dataset('names', data=self.names)
         temp.create_dataset('hashesperid', data=self.hashesperid)
-        
+
         # temp.close()
 
     def load(self, name):
         """ Read either pklz or mat-format hash table file """
-        logger.trace(f"Loading hash table from {name}")
+        logger.debug(f"Loading hash table from {name}")
 
         ext = os.path.splitext(name)[1]
-        logger.trace(f"File extension is {ext}")
+        logger.debug(f"File extension is {ext}")
         if ext == '.mat':
             self.load_matlab(name)
         elif ext == '.hdf':
             self.load_hdf(name)
-        elif ext == '.pkl':
+        elif ext == '.pkl' or ext == '.pklz':
             self.load_pkl(name)
         else:
             logger.debug("Hash table file type is not specified. Loading as HDF")
@@ -267,7 +282,11 @@ class HashTable(object):
         nhashes = sum(self.counts)
         # Report the proportion of dropped hashes (overfull table)
         dropped = nhashes - sum(np.minimum(self.depth, self.counts))
-        logger.debug(f"Read fprints for {sum(n is not None for n in self.names)} files ({nhashes} hashes) from {name} ({100.0 * dropped / max(1, nhashes):.2f}% dropped)")
+        logger.debug(
+            f"Read fprints for {sum(n is not None for n in self.names)} files "
+            f"({nhashes} hashes) from {name} "
+            f"({100.0 * dropped / max(1, nhashes):.2f}% dropped)"
+        )
 
     def load_hdf(self, name, file_object=None):
         """ Read hash table values from pickle file <name>. """
@@ -284,10 +303,10 @@ class HashTable(object):
         #                      str(HT_OLD_COMPAT_VERSION))
 
         # assert temp.ht_version >= HT_COMPAT_VERSION
-        
+
         self.hashbits = temp.attrs['hashbits']
         self.depth = temp.attrs['depth']
-        
+
         if "maxtimebits" in temp.attrs:
             self.maxtimebits = temp.attrs['maxtimebits']
         else:
@@ -295,7 +314,7 @@ class HashTable(object):
             # self.maxtimebits = _bitsfor(temp.maxtime)
 
         self.table = temp['table'][:]
-        
+
         self.counts = temp['counts'][:]
         self.names = list(temp['names'].asstr())
         self.hashesperid = np.array(temp['hashesperid'][...]).astype(np.uint32)

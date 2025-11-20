@@ -1,19 +1,7 @@
 audfprint-enhanced
 =========
 
-This fork includes HDF support. And some code speedup.
-
-Before:
-
-![Before](Figure_1.png)
-
-After:
-
-![After](Figure_2.png)
-
-And the fingerprint database file has been downsized from 405MB to 6MB!
-
-These measurements were taken by [memory_profiler](https://github.com/pythonprofilers/memory_profiler)
+This fork includes HDF support and some code speedup by [Roman Zhymabek](https://github.com/ZhymabekRoman) as well as clean up, minor improvements and PyPI packaging.
 
 ---
 
@@ -68,8 +56,27 @@ Options:
   --help                          Print this message
 ```
 
-audfprint require some packages You can install them with.
-```pip install -r requirements.txt```
+audfprint requires a handful of Python dependencies. Install [uv](https://github.com/astral-sh/uv) once, then let it manage everything:
+
+```
+uv sync --group dev
+```
+
+Run the CLI straight from the managed environment with commands such as:
+
+```
+uv run audfprint --help
+```
+
+Code style is enforced with [ruff](https://docs.astral.sh/ruff/), which now handles both linting and formatting:
+
+```
+# format
+uv run ruff format
+
+# lint
+uv run ruff check
+```
 
 This version uses `ffmpeg` to read input files.  You must have a working `ffmpeg` binary in your path (try `ffmpeg -V` at the command prompt).
 

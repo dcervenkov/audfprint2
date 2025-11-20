@@ -7,24 +7,26 @@ Class to do the analysis of wave files into hash constellations.
 2014-09-20 Dan Ellis dpwe@ee.columbia.edu
 """
 
-from loguru import logger
-
+# For glob2hashtable, localtester
+import glob
+import logging
 import os
-import numpy as np
-
-import scipy.signal
 
 # For reading/writing hashes to file
 import struct
-
-# For glob2hashtable, localtester
-import glob
 import time
 
+import numpy as np
+import scipy.signal
+
 import audio_read
+
 # For utility, glob2hashtable
 import hash_table
 import stft
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("audfprint")
 
 # ############### Globals ############### #
 # Special extension indicating precomputed fingerprint
@@ -46,10 +48,7 @@ def locmax(vec, indices=False):
     nbr[0] = True
     nbr[1:-1] = np.greater_equal(vec[1:], vec[:-1])
     maxmask = (nbr[:-1] & ~nbr[1:])
-    if indices:
-        return np.nonzero(maxmask)[0]
-    else:
-        return maxmask
+    return np.nonzero(maxmask)[0] if indices else maxmask
 
 
 # Constants for Analyzer
@@ -303,8 +302,7 @@ class Analyzer(object):
         scols = np.shape(sgram)[1]
         pklist = []
         for col in range(scols):
-            for bin_ in np.nonzero(peaks[:, col])[0]:
-                pklist.append((col, bin_))
+            pklist.extend((col, bin_) for bin_ in np.nonzero(peaks[:, col])[0])
         return pklist
 
     def peaks2landmarks(self, pklist):
@@ -332,13 +330,10 @@ class Analyzer(object):
                                        min(scols, col + self.targetdt)):
                         if pairsthispeak < self.maxpairsperpeak:
                             for peak2 in peaks_at[col2]:
-                                if abs(peak2 - peak) < self.targetdf:
-                                    # and abs(peak2-peak) + abs(col2-col) > 2 ):
-                                    if pairsthispeak < self.maxpairsperpeak:
-                                        # We have a pair!
-                                        landmarks.append((col, peak,
-                                                          peak2, col2 - col))
-                                        pairsthispeak += 1
+                                if abs(peak2 - peak) < self.targetdf and pairsthispeak < self.maxpairsperpeak:
+                                    landmarks.append((col, peak,
+                                                      peak2, col2 - col))
+                                    pairsthispeak += 1
 
         return landmarks
 
@@ -357,10 +352,10 @@ class Analyzer(object):
                 # [d, sr] = librosa.load(filename, sr=self.target_sr)
                 d, sr = audio_read.audio_read(filename, sr=self.target_sr, channels=1)
             except Exception as e:  # audioread.NoBackendError:
-                message = "wavfile2peaks: Error reading " + filename
+                message = f"wavfile2peaks: Error reading {filename}"
                 if self.fail_on_error:
                     logger.exception(e)
-                    raise IOError(message)
+                    raise IOError(message) from e
                 logger.debug(message, "skipping")
                 d = []
                 sr = self.target_sr
@@ -404,9 +399,10 @@ class Analyzer(object):
             if isinstance(peaks[0], list):
                 peaklists = peaks
                 query_hashes = []
-                for peaklist in peaklists:
-                    query_hashes.append(landmarks2hashes(
-                        self.peaks2landmarks(peaklist)))
+                query_hashes.extend(
+                    landmarks2hashes(self.peaks2landmarks(peaklist))
+                    for peaklist in peaklists
+                )
                 query_hashes = np.concatenate(query_hashes)
             else:
                 query_hashes = landmarks2hashes(self.peaks2landmarks(peaks))
@@ -420,7 +416,7 @@ class Analyzer(object):
                 (unique_hash_hash & ((1 << 32) - 1))[:, np.newaxis]
             ]).astype(np.int32)
             hashes = unique_hashes
-            # Or simply np.unique(query_hashes, axis=0) for numpy >= 1.13
+                # Or simply np.unique(query_hashes, axis=0) for numpy >= 1.13
 
         # print("wavfile2hashes: read", len(hashes), "hashes from", filename)
         return hashes
@@ -481,8 +477,7 @@ def hashes_load(hashfilename):
     with open(hashfilename, 'rb') as f:
         magic = f.read(len(HASH_MAGIC))
         if magic != HASH_MAGIC:
-            raise IOError('%s is not a hash file (magic %s)'
-                          % (hashfilename, magic))
+            raise IOError(f'{hashfilename} is not a hash file (magic {magic})')
         data = f.read(fmtsize)
         while data is not None and len(data) == fmtsize:
             hashes.append(struct.unpack(HASH_FMT, data))
@@ -505,8 +500,7 @@ def peaks_load(peakfilename):
     with open(peakfilename, 'rb') as f:
         magic = f.read(len(PEAK_MAGIC))
         if magic != PEAK_MAGIC:
-            raise IOError('%s is not a peak file (magic %s)'
-                          % (peakfilename, magic))
+            raise IOError(f'{peakfilename} is not a peak file (magic {magic})')
         data = f.read(fmtsize)
         while data is not None and len(data) == fmtsize:
             peaks.append(struct.unpack(PEAK_FMT, data))
@@ -534,18 +528,10 @@ def extract_features(track_obj, *args, **kwargs):
     if extract_features_analyzer is None:
         extract_features_analyzer = Analyzer()
 
-    density = None
-    n_fft = None
-    n_hop = None
-    sr = None
-    if "density" in kwargs:
-        density = kwargs["density"]
-    if "n_fft" in kwargs:
-        n_fft = kwargs["n_fft"]
-    if "n_hop" in kwargs:
-        n_hop = kwargs["n_hop"]
-    if "sr" in kwargs:
-        sr = kwargs["sr"]
+    density = kwargs.get("density", None)
+    n_fft = kwargs.get("n_fft", None)
+    n_hop = kwargs.get("n_hop", None)
+    sr = kwargs.get("sr", None)
     extract_features_analyzer.density = density
     extract_features_analyzer.n_fft = n_fft
     extract_features_analyzer.n_hop = n_hop
