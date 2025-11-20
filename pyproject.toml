@@ -38,9 +38,6 @@ py-modules = [
     "audfprint_analyze",
     "audfprint_match",
     "audio_read",
-    "comp_file_lines",
-    "dpwe_builder",
-    "dpwe_matcher",
     "hash_table",
     "stft",
 ]

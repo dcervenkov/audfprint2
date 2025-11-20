@@ -7,13 +7,15 @@ Port of the Matlab implementation.
 2014-05-25 Dan Ellis dpwe@ee.columbia.edu
 """
 
-
 import argparse
 import contextlib
 import logging
 import multiprocessing
 import os
 import time
+from collections.abc import Iterable, Iterator, Sequence
+from multiprocessing.connection import Connection
+from typing import Any
 
 import joblib  # type: ignore[import-untyped]
 
@@ -27,7 +29,12 @@ time_clock = time.process_time
 logger = logging.getLogger("audfprint")
 
 
-def filename_list_iterator(filelist, wavdir, wavext, listflag):
+def filename_list_iterator(
+    filelist: Sequence[str],
+    wavdir: str,
+    wavext: str,
+    listflag: bool,
+) -> Iterator[str]:
     """ Iterator to yeild all the filenames, possibly interpreting them
         as list files, prepending wavdir """
     if not listflag:
@@ -41,7 +48,7 @@ def filename_list_iterator(filelist, wavdir, wavext, listflag):
 
 
 # for saving precomputed fprints
-def ensure_dir(dirname):
+def ensure_dir(dirname: str) -> None:
     """ ensure that the named directory exists """
     if len(dirname) and not os.path.exists(dirname):
         with contextlib.suppress(OSError):
@@ -52,10 +59,15 @@ def ensure_dir(dirname):
 
 # basic operations, each in a separate function
 
-def file_precompute_peaks_or_hashes(analyzer, filename, precompdir,
-                                    precompext=None, hashes_not_peaks=True,
-                                    skip_existing=False,
-                                    strip_prefix=None):
+def file_precompute_peaks_or_hashes(
+    analyzer: audfprint_analyze.Analyzer,
+    filename: str,
+    precompdir: str,
+    precompext: str | None = None,
+    hashes_not_peaks: bool = True,
+    skip_existing: bool = False,
+    strip_prefix: str | None = None,
+) -> list[str]:
     """ Perform precompute action for one file, return list
         of message strings """
     # If strip_prefix is specified and matches the start of filename,
@@ -108,7 +120,14 @@ def file_precompute_peaks_or_hashes(analyzer, filename, precompdir,
     return [message]
 
 
-def file_precompute(analyzer, filename, precompdir, type='peaks', skip_existing=False, strip_prefix=None):
+def file_precompute(
+    analyzer: audfprint_analyze.Analyzer,
+    filename: str,
+    precompdir: str,
+    type: str = 'peaks',
+    skip_existing: bool = False,
+    strip_prefix: str | None = None,
+) -> list[str]:
     """ Perform precompute action for one file, return list
         of message strings """
     logger.debug(time.ctime(), "precomputing", type, "for", filename, "...")
@@ -119,7 +138,14 @@ def file_precompute(analyzer, filename, precompdir, type='peaks', skip_existing=
                                            strip_prefix=strip_prefix)
 
 
-def make_ht_from_list(analyzer, filelist, hashbits, depth, maxtime, pipe=None):
+def make_ht_from_list(
+    analyzer: audfprint_analyze.Analyzer,
+    filelist: Sequence[str],
+    hashbits: int,
+    depth: int,
+    maxtime: int,
+    pipe: Connection | None = None,
+) -> hash_table.HashTable | None:
     """ Populate a hash table from a list, used as target for
         multiprocess division.  pipe is a pipe over which to push back
         the result, else return it """
@@ -136,11 +162,21 @@ def make_ht_from_list(analyzer, filelist, hashbits, depth, maxtime, pipe=None):
         return ht
 
 
-def do_cmd(cmd, analyzer, hash_tab, filename_iter, matcher, outdir, type, skip_existing=False, strip_prefix=None):
+def do_cmd(
+    cmd: str,
+    analyzer: audfprint_analyze.Analyzer | None,
+    hash_tab: hash_table.HashTable | None,
+    filename_iter: Iterable[str],
+    matcher: audfprint_match.Matcher | None,
+    outdir: str,
+    type: str,
+    skip_existing: bool = False,
+    strip_prefix: str | None = None,
+) -> None:
     """ Breaks out the core part of running the command.
         This is just the single-core versions.
     """
-    if cmd in ('merge', 'newmerge'):
+    if cmd in {'merge', 'newmerge'}:
         # files are other hash tables, merge them in
         for filename in filename_iter:
             hash_tab2 = hash_table.HashTable(filename)
@@ -168,7 +204,7 @@ def do_cmd(cmd, analyzer, hash_tab, filename_iter, matcher, outdir, type, skip_e
             for msg in msgs:
                 logger.debug(msg)
 
-    elif cmd in ('new', 'add'):
+    elif cmd in {'new', 'add'}:
         # Adding files
         tothashes = 0
         for ix, filename in enumerate(filename_iter):
@@ -194,7 +230,13 @@ def do_cmd(cmd, analyzer, hash_tab, filename_iter, matcher, outdir, type, skip_e
         raise ValueError(f"unrecognized command: {cmd}")
 
 
-def multiproc_add(analyzer, hash_tab, filename_iter, report, ncores):
+def multiproc_add(
+    analyzer: audfprint_analyze.Analyzer,
+    hash_tab: hash_table.HashTable,
+    filename_iter: Iterable[str],
+    report: Any | None,
+    ncores: int,
+) -> None:
     """Run multiple threads adding new files to hash table"""
     # run ncores in parallel to add new files to existing HASH_TABLE
     # lists store per-process parameters
@@ -232,16 +274,31 @@ def multiproc_add(analyzer, hash_tab, filename_iter, report, ncores):
         pr[core].join()
 
 
-def matcher_file_match_to_msgs(matcher, analyzer, hash_tab, filename):
+def matcher_file_match_to_msgs(
+    matcher: audfprint_match.Matcher,
+    analyzer: audfprint_analyze.Analyzer,
+    hash_tab: hash_table.HashTable,
+    filename: str,
+) -> list[str]:
     """Cover for matcher.file_match_to_msgs so it can be passed to joblib"""
     return matcher.file_match_to_msgs(analyzer, hash_tab, filename)
 
 
-def do_cmd_multiproc(cmd, analyzer, hash_tab, filename_iter, matcher,
-                     outdir, type, report, skip_existing=False,
-                     strip_prefix=None, ncores=1):
+def do_cmd_multiproc(
+    cmd: str,
+    analyzer: audfprint_analyze.Analyzer | None,
+    hash_tab: hash_table.HashTable | None,
+    filename_iter: Iterable[str],
+    matcher: audfprint_match.Matcher | None,
+    outdir: str,
+    type: str,
+    report: Any | None = None,
+    skip_existing: bool = False,
+    strip_prefix: str | None = None,
+    ncores: int = 1,
+) -> None:
     """ Run the actual command, using multiple processors """
-    if cmd in ('precompute', 'new', 'add'):
+    if cmd in {'precompute', 'new', 'add'}:
         # precompute fingerprints with joblib
         msgslist = joblib.Parallel(n_jobs=ncores)(
                 joblib.delayed(file_precompute)(
@@ -266,7 +323,7 @@ def do_cmd_multiproc(cmd, analyzer, hash_tab, filename_iter, matcher,
         for msgs in msgslist:
             logger.debug(msgs)
 
-    elif cmd in ('new', 'add'):
+    elif cmd in {'new', 'add'}:
         # We add by forking multiple parallel threads each running
         # analyzers over different subsets of the file list
         multiproc_add(analyzer, hash_tab, filename_iter, report, ncores)
@@ -277,18 +334,27 @@ def do_cmd_multiproc(cmd, analyzer, hash_tab, filename_iter, matcher,
 
 
 # Command to separate out setting of analyzer parameters
-def setup_analyzer(density, is_match, pks_per_frame, fanout, freq_sd, shifts, samplerate, continue_on_error):
+def setup_analyzer(
+    density: float,
+    is_match: bool,
+    pks_per_frame: int,
+    fanout: int,
+    freq_sd: float,
+    shifts: int,
+    samplerate: int,
+    continue_on_error: bool,
+) -> audfprint_analyze.Analyzer:
     """Create a new analyzer object, taking values from docopts args"""
     # Create analyzer object; parameters will get set below
     analyzer = audfprint_analyze.Analyzer()
     # Read parameters from command line/docopts
-    analyzer.density = float(density)
-    analyzer.maxpksperframe = int(pks_per_frame)
-    analyzer.maxpairsperpeak = int(fanout)
-    analyzer.f_sd = float(freq_sd)
-    analyzer.shifts = int(shifts)
+    analyzer.density = density
+    analyzer.maxpksperframe = pks_per_frame
+    analyzer.maxpairsperpeak = fanout
+    analyzer.f_sd = freq_sd
+    analyzer.shifts = shifts
     # fixed - 512 pt FFT with 256 pt hop at 11025 Hz
-    analyzer.target_sr = int(samplerate)
+    analyzer.target_sr = samplerate
     analyzer.n_fft = 512
     analyzer.n_hop = analyzer.n_fft // 2
     # set default value for shifts depending on mode
@@ -300,28 +366,36 @@ def setup_analyzer(density, is_match, pks_per_frame, fanout, freq_sd, shifts, sa
 
 
 def setup_matcher(
-    match_win, search_depth, min_count, max_matches, exact_count,
-    find_time_range, time_quantile, sortbytime, illustrate, illustrate_hpf
-):
+    match_win: int,
+    search_depth: int,
+    min_count: int,
+    max_matches: int,
+    exact_count: bool,
+    find_time_range: bool,
+    time_quantile: float,
+    sortbytime: bool,
+    illustrate: bool,
+    illustrate_hpf: bool,
+) -> audfprint_match.Matcher:
     """Create a new matcher objects, set parameters from docopt structure"""
     matcher = audfprint_match.Matcher()
-    matcher.window = int(match_win)
-    matcher.threshcount = int(min_count)
-    matcher.max_returns = int(max_matches)
-    matcher.search_depth = int(search_depth)
+    matcher.window = match_win
+    matcher.threshcount = min_count
+    matcher.max_returns = max_matches
+    matcher.search_depth = search_depth
     matcher.sort_by_time = sortbytime
     matcher.exact_count = exact_count | illustrate | illustrate_hpf
     matcher.illustrate = illustrate | illustrate_hpf
     matcher.illustrate_hpf = illustrate_hpf
     matcher.find_time_range = find_time_range
-    matcher.time_quantile = float(time_quantile)
+    matcher.time_quantile = time_quantile
     return matcher
 
 
-__version__ = 20150406
+__version__ = 20251119
 
 
-def build_parser():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Landmark-based audio fingerprinting. Create a new fingerprint dbase with 'new', append "
@@ -462,13 +536,13 @@ def build_parser():
     return parser
 
 
-def parse_args(argv=None):
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Create and parse the command-line arguments."""
     parser = build_parser()
     return parser.parse_args(argv)
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     logging.getLogger().setLevel(logging.DEBUG if args.verbose else logging.WARNING)
 

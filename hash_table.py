@@ -8,7 +8,6 @@ used for the audfprint fingerprinter.
 2014-05-25 Dan Ellis dpwe@ee.columbia.edu
 """
 
-# import zlib
 import gzip as zlib
 import json
 import logging
@@ -16,7 +15,9 @@ import math
 import os
 import pickle
 import random
+from collections.abc import Callable, Iterable
 from enum import Enum
+from typing import IO
 
 import h5py
 import numpy as np
@@ -26,13 +27,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("audfprint")
 
 basestring = (str, bytes)
-pickle_options = {'encoding': 'latin1'}
+pickle_options = {"encoding": "latin1"}
 
 
 class DatabaseType(Enum):
     PKL = "PKL"
     HDF = "HDF"
     MAT = "MAT"
+
 
 # Current format version
 HT_VERSION = 20170724
@@ -42,9 +44,9 @@ HT_COMPAT_VERSION = 20170724
 HT_OLD_COMPAT_VERSION = 20140920
 
 
-def _bitsfor(maxval):
-    """ Convert a maxval into a number of bits (left shift).
-        Raises a ValueError if the maxval is not a power of 2. """
+def _bitsfor(maxval: int) -> int:
+    """Convert a maxval into a number of bits (left shift).
+    Raises a ValueError if the maxval is not a power of 2."""
     maxvalbits = int(round(math.log(maxval) / math.log(2)))
     if maxval != (1 << maxvalbits):
         raise ValueError("maxval must be a power of 2, not %d" % maxval)
@@ -60,13 +62,28 @@ class HashTable(object):
        >>> ht.store('identifier', list_of_landmark_time_hash_pairs)
        >>> list_of_ids_tracks = ht.get_hits(hash)
     """
+
     __slots__ = (
-        "hashbits", "depth", "maxtimebits", "table", "counts", "names",
-        "hashesperid", "params", "ht_version", "dirty"
+        "hashbits",
+        "depth",
+        "maxtimebits",
+        "table",
+        "counts",
+        "names",
+        "hashesperid",
+        "params",
+        "ht_version",
+        "dirty",
     )
 
-    def __init__(self, filename=None, hashbits=20, depth=100, maxtime=16384):
-        """ allocate an empty hash table of the specified size """
+    def __init__(
+        self,
+        filename: str | None = None,
+        hashbits: int = 20,
+        depth: int = 100,
+        maxtime: int = 16384,
+    ) -> None:
+        """allocate an empty hash table of the specified size"""
         if filename is not None:
             self.load(filename)
         else:
@@ -74,7 +91,7 @@ class HashTable(object):
             self.depth = depth
             self.maxtimebits = _bitsfor(maxtime)
             # allocate the big table
-            size = 2 ** hashbits
+            size = 2**hashbits
             self.table = np.zeros((size, depth), dtype=np.uint32)
             # keep track of number of entries in each list
             self.counts = np.zeros(size, dtype=np.int32)
@@ -89,17 +106,17 @@ class HashTable(object):
             # Mark as unsaved
             self.dirty = True
 
-    def reset(self):
-        """ Reset to empty state (but preserve parameters) """
+    def reset(self) -> None:
+        """Reset to empty state (but preserve parameters)"""
         self.table[:, :] = 0
         self.counts[:] = 0
         self.names = []
         self.hashesperid.resize(0)
         self.dirty = True
 
-    def store(self, name, timehashpairs):
-        """ Store a list of hashes in the hash table
-            associated with a particular name (or integer ID) and time.
+    def store(self, name: str | int, timehashpairs: Iterable[tuple[int, int]]) -> None:
+        """Store a list of hashes in the hash table
+        associated with a particular name (or integer ID) and time.
         """
         id_ = self.name_to_id(name, add_if_missing=True)
         # Now insert the hashes
@@ -128,7 +145,7 @@ class HashTable(object):
             # time_ %= mxtime
             time_ &= timemask
             # Mixin with ID
-            val = (idval + time_)  # .astype(np.uint32)
+            val = idval + time_  # .astype(np.uint32)
             if count < self.depth:
                 # insert new val in next empty slot
                 # slot = self.counts[hash_]
@@ -146,20 +163,20 @@ class HashTable(object):
         # Mark as unsaved
         self.dirty = True
 
-    def get_entry(self, hash_):
-        """ Return np.array of [id, time] entries
-            associate with the given hash as rows.
+    def get_entry(self, hash_: int) -> np.ndarray:
+        """Return np.array of [id, time] entries
+        associate with the given hash as rows.
         """
-        vals = self.table[hash_, :min(self.depth, self.counts[hash_])]
+        vals = self.table[hash_, : min(self.depth, self.counts[hash_])]
         maxtimemask = (1 << self.matimebits) - 1
         # ids we report externally start at 0, but in table they start at 1.
         ids = (vals >> self.maxtimebits) - 1
         return np.c_[ids, vals & maxtimemask].astype(np.int32)
 
-    def get_hits(self, hashes):
-        """ Return np.array of [id, delta_time, hash, time] rows
-            associated with each element in hashes array of [time, hash] rows.
-            This version has get_entry() inlined, it's about 30% faster.
+    def get_hits(self, hashes: np.ndarray) -> np.ndarray:
+        """Return np.array of [id, delta_time, hash, time] rows
+        associated with each element in hashes array of [time, hash] rows.
+        This version has get_entry() inlined, it's about 30% faster.
         """
         # Allocate to largest possible number of hits
         nhashes = np.shape(hashes)[0]
@@ -184,23 +201,26 @@ class HashTable(object):
         hits.resize((nhits, 4), refcheck=False)
         return hits
 
-    def save(self, name, params=None, file_object=None, save_type=None):
+    def save(
+        self,
+        name: str,
+        params: dict | None = None,
+        file_object: IO[bytes] | None = None,
+        save_type: DatabaseType | str | None = None,
+    ) -> None:
         base, ext = os.path.splitext(name)
         ext = ext.lower()
 
         if not save_type:
-            if ext == ".hdf":
+            if ext == ".hdf" or ext not in (".pkl", ".pklz"):
                 save_type = DatabaseType.HDF
-            elif ext in (".pkl", ".pklz"):
-                save_type = DatabaseType.PKL
             else:
-                save_type = DatabaseType.HDF
-
-        if save_type == DatabaseType.HDF or save_type == DatabaseType.HDF.value:
+                save_type = DatabaseType.PKL
+        if save_type in [DatabaseType.HDF, DatabaseType.HDF.value]:
             if ext != ".hdf":
                 name = f"{base}.hdf"
             self.save_hdf(name)
-        elif save_type == DatabaseType.PKL or save_type == DatabaseType.PKL.value:
+        elif save_type in [DatabaseType.PKL, DatabaseType.PKL.value]:
             if ext not in (".pkl", ".pklz"):
                 name = f"{base}.pklz"
             self.save_pkl(name)
@@ -208,94 +228,90 @@ class HashTable(object):
             raise ValueError(f"Unknown database type or doesn't support to export: {save_type}")
 
         self.dirty = False
-        nhashes = sum(self.counts)
-        # Report the proportion of dropped hashes (overfull table)
-        dropped = nhashes - sum(np.minimum(self.depth, self.counts))
-        logger.debug(
-            f"Saved fprints for {sum(n is not None for n in self.names)} files "
-            f"({nhashes} hashes) to {name} "
-            f"({100.0 * dropped / max(1, nhashes):.2f}% dropped)"
-        )
-
+        self._extracted_from_load_28("Saved fprints for ", " hashes) to ", name)
         return name
 
-    def save_pkl(self, name, params=None, file_object=None):
-        """ Save hash table to file <name>,
-            including optional addition params
+    def save_pkl(
+        self,
+        name: str,
+        params: dict | None = None,
+        file_object: IO[bytes] | None = None,
+    ) -> None:
+        """Save hash table to file <name>,
+        including optional addition params
         """
         # Merge in any provided params
         if params:
             for key in params:
                 self.params[key] = params[key]
-        if file_object:
-            f = file_object
-        else:
-            f = zlib.open(name, 'wb')
-
+        f = file_object or zlib.open(name, "wb")
         pickle.dump(self, f, pickle.HIGHEST_PROTOCOL)
 
-
-    def save_hdf(self, name, params=None, file_object=None):
-        """ Save hash table to file <name>,
-            including optional additional params
+    def save_hdf(
+        self,
+        name: str,
+        params: dict | None = None,
+        file_object: h5py.File | None = None,
+    ) -> None:
+        """Save hash table to file <name>,
+        including optional additional params
         """
         # Merge in any provided params
         if params:
             for key in params:
                 self.params[key] = params[key]
 
-        if file_object:
-            f = file_object
-        else:
-            f = name
+        f = file_object or name
+        temp = h5py.File(f, "w")
 
-        temp = h5py.File(f, 'w')
+        temp.attrs["params"] = json.dumps(self.params)
+        temp.attrs["hashbits"] = self.hashbits
+        temp.attrs["depth"] = self.depth
+        temp.attrs["maxtimebits"] = self.maxtimebits
 
-        temp.attrs['params'] = json.dumps(self.params)
-        temp.attrs['hashbits'] = self.hashbits
-        temp.attrs['depth'] = self.depth
-        temp.attrs['maxtimebits'] = self.maxtimebits
-
-        temp.create_dataset('table', data=self.table, compression="gzip", compression_opts=1)
-        temp.create_dataset('counts', data=self.counts)
-        temp.create_dataset('names', data=self.names)
-        temp.create_dataset('hashesperid', data=self.hashesperid)
+        temp.create_dataset("table", data=self.table, compression="gzip", compression_opts=1)
+        temp.create_dataset("counts", data=self.counts)
+        temp.create_dataset("names", data=self.names)
+        temp.create_dataset("hashesperid", data=self.hashesperid)
 
         # temp.close()
 
-    def load(self, name):
-        """ Read either pklz or mat-format hash table file """
+    def load(self, name: str) -> None:
+        """Read either pklz or mat-format hash table file"""
         logger.debug(f"Loading hash table from {name}")
 
         ext = os.path.splitext(name)[1]
         logger.debug(f"File extension is {ext}")
-        if ext == '.mat':
+        if ext == ".mat":
             self.load_matlab(name)
-        elif ext == '.hdf':
+        elif ext == ".hdf":
             self.load_hdf(name)
-        elif ext == '.pkl' or ext == '.pklz':
+        elif ext in [".pkl", ".pklz"]:
             self.load_pkl(name)
         else:
             logger.debug("Hash table file type is not specified. Loading as HDF")
             self.load_hdf(name)
 
+        self._extracted_from_load_28("Read fprints for ", " hashes) from ", name)
+
+    # TODO Rename this here and in `save` and `load`
+    def _extracted_from_load_28(self, arg0: str, arg1: str, name: str) -> None:
         nhashes = sum(self.counts)
-        # Report the proportion of dropped hashes (overfull table)
         dropped = nhashes - sum(np.minimum(self.depth, self.counts))
+        num_files = sum(n is not None for n in self.names)
+        drop_percent = 100.0 * dropped / max(1, nhashes)
         logger.debug(
-            f"Read fprints for {sum(n is not None for n in self.names)} files "
-            f"({nhashes} hashes) from {name} "
-            f"({100.0 * dropped / max(1, nhashes):.2f}% dropped)"
+            f"{arg0}{num_files} files ({nhashes}{arg1}{name} ({drop_percent:.2f}% dropped)"
         )
 
-    def load_hdf(self, name, file_object=None):
-        """ Read hash table values from pickle file <name>. """
-        if file_object:
-            f = file_object
-        else:
-            f = name
-
-        temp = h5py.File(f, 'r')
+    def load_hdf(
+        self,
+        name: str,
+        file_object: h5py.File | None = None,
+    ) -> None:
+        """Read hash table values from pickle file <name>."""
+        f = file_object or name
+        temp = h5py.File(f, "r")
 
         # if temp.ht_version < HT_OLD_COMPAT_VERSION:
         #     raise ValueError('Version of ' + name + ' is ' + str(temp.ht_version)
@@ -304,50 +320,49 @@ class HashTable(object):
 
         # assert temp.ht_version >= HT_COMPAT_VERSION
 
-        self.hashbits = temp.attrs['hashbits']
-        self.depth = temp.attrs['depth']
+        self.hashbits = temp.attrs["hashbits"]
+        self.depth = temp.attrs["depth"]
 
         if "maxtimebits" in temp.attrs:
-            self.maxtimebits = temp.attrs['maxtimebits']
+            self.maxtimebits = temp.attrs["maxtimebits"]
         else:
             raise ValueError("'maxtimebits' not found!")
             # self.maxtimebits = _bitsfor(temp.maxtime)
 
-        self.table = temp['table'][:]
+        self.table = temp["table"][:]
 
-        self.counts = temp['counts'][:]
-        self.names = list(temp['names'].asstr())
-        self.hashesperid = np.array(temp['hashesperid'][...]).astype(np.uint32)
+        self.counts = temp["counts"][:]
+        self.names = list(temp["names"].asstr())
+        self.hashesperid = np.array(temp["hashesperid"][...]).astype(np.uint32)
         self.dirty = False
-        self.params = json.loads(temp.attrs['params'])
+        self.params = json.loads(temp.attrs["params"])
 
         # self.ht_version = temp.ht_version
 
-    def load_pkl(self, name, file_object=None):
-        """ Read hash table values from pickle file <name>. """
-        if file_object:
-            f = file_object
-        else:
-            f = zlib.open(name, 'rb')
+    def load_pkl(
+        self,
+        name: str,
+        file_object: IO[bytes] | None = None,
+    ) -> None:
+        """Read hash table values from pickle file <name>."""
+        f = file_object or zlib.open(name, "rb")
         temp = pickle.load(f, **pickle_options)
         if temp.ht_version < HT_OLD_COMPAT_VERSION:
-            raise ValueError('Version of ' + name + ' is ' + str(temp.ht_version)
-                             + ' which is not at least ' +
-                             str(HT_OLD_COMPAT_VERSION))
+            raise ValueError(
+                f"Version of {name} is {str(temp.ht_version)} which is not at least {str(HT_OLD_COMPAT_VERSION)}"
+            )
         # assert temp.ht_version >= HT_COMPAT_VERSION
         self.hashbits = temp.hashbits
         self.depth = temp.depth
-        if hasattr(temp, 'maxtimebits'):
+        if hasattr(temp, "maxtimebits"):
             self.maxtimebits = temp.maxtimebits
         else:
             self.maxtimebits = _bitsfor(temp.maxtime)
         if temp.ht_version < HT_COMPAT_VERSION:
             # Need to upgrade the database.
-            logger.debug("Loading database version", temp.ht_version,
-                  "in compatibility mode.")
+            logger.debug("Loading database version", temp.ht_version, "in compatibility mode.")
             # Offset all the nonzero bins with one ID count.
-            temp.table += np.array(1 << self.maxtimebits).astype(np.uint32) * (
-                    temp.table != 0)
+            temp.table += np.array(1 << self.maxtimebits).astype(np.uint32) * (temp.table != 0)
             temp.ht_version = HT_VERSION
 
         self.table = temp.table
@@ -358,8 +373,8 @@ class HashTable(object):
         self.dirty = False
         self.params = temp.params
 
-    def load_matlab(self, name):
-        """ Read hash table from version saved by Matlab audfprint.
+    def load_matlab(self, name: str) -> None:
+        """Read hash table from version saved by Matlab audfprint.
         :params:
           name : str
             filename of .mat matlab fp dbase file
@@ -375,34 +390,32 @@ class HashTable(object):
                 target sampling rate from Matlab file (must be 11025)
         """
         mht = scipy.io.loadmat(name)
-        params = {}
-        params['mat_version'] = mht['HT_params'][0][0][-1][0][0]
-        assert params['mat_version'] >= 0.9
-        self.hashbits = _bitsfor(mht['HT_params'][0][0][0][0][0])
-        self.depth = mht['HT_params'][0][0][1][0][0]
-        self.maxtimebits = _bitsfor(mht['HT_params'][0][0][2][0][0])
-        params['hoptime'] = mht['HT_params'][0][0][3][0][0]
-        params['targetsr'] = mht['HT_params'][0][0][4][0][0]
-        params['nojenkins'] = mht['HT_params'][0][0][5][0][0]
+        params = {"mat_version": mht["HT_params"][0][0][-1][0][0]}
+        assert params["mat_version"] >= 0.9
+        self.hashbits = _bitsfor(mht["HT_params"][0][0][0][0][0])
+        self.depth = mht["HT_params"][0][0][1][0][0]
+        self.maxtimebits = _bitsfor(mht["HT_params"][0][0][2][0][0])
+        params["hoptime"] = mht["HT_params"][0][0][3][0][0]
+        params["targetsr"] = mht["HT_params"][0][0][4][0][0]
+        params["nojenkins"] = mht["HT_params"][0][0][5][0][0]
         # Python doesn't support the (pointless?) jenkins hashing
-        assert params['nojenkins']
-        self.table = mht['HashTable'].T
-        self.counts = mht['HashTableCounts'][0]
-        self.names = [str(val[0]) if len(val) > 0 else []
-                      for val in mht['HashTableNames'][0]]
-        self.hashesperid = np.array(mht['HashTableLengths'][0]).astype(np.uint32)
+        assert params["nojenkins"]
+        self.table = mht["HashTable"].T
+        self.counts = mht["HashTableCounts"][0]
+        self.names = [str(val[0]) if len(val) > 0 else [] for val in mht["HashTableNames"][0]]
+        self.hashesperid = np.array(mht["HashTableLengths"][0]).astype(np.uint32)
         # Matlab uses 1-origin for the IDs in the hashes, but the Python code
         # also skips using id_ 0, so that names[0] corresponds to id_ 1.
         # Otherwise unmodified database
         self.dirty = False
         self.params = params
 
-    def totalhashes(self):
-        """ Return the total count of hashes stored in the table """
+    def totalhashes(self) -> int:
+        """Return the total count of hashes stored in the table"""
         return np.sum(self.counts)
 
-    def merge(self, ht):
-        """ Merge in the results from another hash table """
+    def merge(self, ht: "HashTable") -> None:
+        """Merge in the results from another hash table"""
         # All the items go into our table, offset by our current size
         # Check compatibility
         assert self.maxtimebits == ht.maxtimebits
@@ -413,8 +426,7 @@ class HashTable(object):
         # Shift all the IDs in the second table down by ncurrent
         idoffset = (1 << self.maxtimebits) * ncurrent
         for hash_ in np.nonzero(ht.counts)[0]:
-            allvals = np.r_[self.table[hash_, :self.counts[hash_]],
-                            ht.table[hash_, :ht.counts[hash_]] + idoffset]
+            allvals = np.r_[self.table[hash_, : self.counts[hash_]], ht.table[hash_, : ht.counts[hash_]] + idoffset]
             # ht.counts[hash_] may be more than the actual number of
             # hashes we obtained, if ht.counts[hash_] > ht.depth.
             # Subselect based on actual size.
@@ -422,7 +434,7 @@ class HashTable(object):
                 # Our hash bin is filled: randomly subselect the
                 # hashes, and update count to accurately track the
                 # total number of hashes we've seen for this bin.
-                somevals = np.random.permutation(allvals)[:self.depth]
+                somevals = np.random.permutation(allvals)[: self.depth]
                 self.table[hash_,] = somevals
                 self.counts[hash_] += ht.counts[hash_]
             else:
@@ -430,18 +442,18 @@ class HashTable(object):
                 # accurately track how many values it contains.  This
                 # may mean some of the hashes counted for full buckets
                 # in ht are "forgotten" if ht.depth < self.depth.
-                self.table[hash_, :len(allvals)] = allvals
+                self.table[hash_, : len(allvals)] = allvals
                 self.counts[hash_] = len(allvals)
 
         self.dirty = True
 
-    def name_to_id(self, name, add_if_missing=False):
-        """ Lookup name in the names list, or optionally add. """
+    def name_to_id(self, name: str | int, add_if_missing: bool = False) -> int:
+        """Lookup name in the names list, or optionally add."""
         if isinstance(name, basestring):
             # lookup name or assign new
             if name not in self.names:
                 if not add_if_missing:
-                    raise ValueError("name " + name + " not found")
+                    raise ValueError(f"name {name} not found")
                 # Use an empty slot in the list if one exists.
                 try:
                     id_ = self.names.index(None)
@@ -456,18 +468,16 @@ class HashTable(object):
             id_ = name
         return id_
 
-    def remove(self, name):
-        """ Remove all data for named entity from the hash table. """
+    def remove(self, name: str | int) -> None:
+        """Remove all data for named entity from the hash table."""
         id_ = self.name_to_id(name)
         # Top nybbles of table entries are id_ + 1 (to avoid all-zero entries)
         id_in_table = (self.table >> self.maxtimebits) == id_ + 1
         hashes_removed = 0
         for hash_ in np.nonzero(np.max(id_in_table, axis=1))[0]:
-            vals = self.table[hash_, :self.counts[hash_]]
-            vals = [v for v, x in zip(vals, id_in_table[hash_])
-                    if not x]
-            self.table[hash_] = np.hstack([vals,
-                                           np.zeros(self.depth - len(vals))])
+            vals = self.table[hash_, : self.counts[hash_]]
+            vals = [v for v, x in zip(vals, id_in_table[hash_], strict=False) if not x]
+            self.table[hash_] = np.hstack([vals, np.zeros(self.depth - len(vals))])
             # This will forget how many extra hashes we had dropped until now.
             self.counts[hash_] = len(vals)
             hashes_removed += np.sum(id_in_table[hash_])
@@ -476,29 +486,27 @@ class HashTable(object):
         self.dirty = True
         logger.debug("Removed", name, "(", hashes_removed, "hashes).")
 
-    def retrieve(self, name):
+    def retrieve(self, name: str | int) -> np.ndarray:
         """Return an np.array of (time, hash) pairs found in the table."""
         id_ = self.name_to_id(name)
         maxtimemask = (1 << self.maxtimebits) - 1
-        num_hashes_per_hash = np.sum(
-                (self.table >> self.maxtimebits) == (id_ + 1), axis=1)
+        num_hashes_per_hash = np.sum((self.table >> self.maxtimebits) == (id_ + 1), axis=1)
         hashes_containing_id = np.nonzero(num_hashes_per_hash)[0]
         timehashpairs = np.zeros((sum(num_hashes_per_hash), 2), dtype=np.int32)
         hashes_so_far = 0
         for hash_ in hashes_containing_id:
-            entries = self.table[hash_, :self.counts[hash_]]
-            matching_entries = np.nonzero(
-                    (entries >> self.maxtimebits) == (id_ + 1))[0]
-            times = (entries[matching_entries] & maxtimemask)
-            timehashpairs[hashes_so_far: hashes_so_far + len(times), 0] = times
-            timehashpairs[hashes_so_far: hashes_so_far + len(times), 1] = hash_
+            entries = self.table[hash_, : self.counts[hash_]]
+            matching_entries = np.nonzero((entries >> self.maxtimebits) == (id_ + 1))[0]
+            times = entries[matching_entries] & maxtimemask
+            timehashpairs[hashes_so_far : hashes_so_far + len(times), 0] = times
+            timehashpairs[hashes_so_far : hashes_so_far + len(times), 1] = hash_
             hashes_so_far += len(times)
         return timehashpairs
 
-    def list(self, print_fn=None):
-        """ List all the known items. """
+    def list(self, print_fn: Callable[[str], None] | None = None) -> None:
+        """List all the known items."""
         if not print_fn:
             print_fn = print
-        for name, count in zip(self.names, self.hashesperid):
+        for name, count in zip(self.names, self.hashesperid, strict=False):
             if name:
-                print_fn(name + " (" + str(count) + " hashes)")
+                print_fn(f"{name} ({str(count)} hashes)")

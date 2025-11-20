@@ -23,6 +23,7 @@ import logging
 
 import audfprint_analyze
 import audio_read
+import hash_table
 import stft
 
 logging.basicConfig(level=logging.INFO)
@@ -30,7 +31,7 @@ logger = logging.getLogger("audfprint")
 TRACE_LEVEL = logging.DEBUG - 5
 
 
-def process_info():
+def process_info() -> tuple[int, float]:
     rss = usrtime = 0
     p = psutil.Process(os.getpid())
     if os.name == 'nt':
@@ -42,18 +43,18 @@ def process_info():
     return rss, usrtime
 
 
-def log(message):
+def log(message: str) -> None:
     """ log info with stats """
     rss, usrtime = process_info()
     logger.debug(f'{time.ctime()} physmem={rss} utime={usrtime} {message}')
 
 
-def encpowerof2(val):
+def encpowerof2(val: int) -> int:
     """ Return N s.t. 2^N >= val """
     return int(np.ceil(np.log(max(1, val)) / np.log(2)))
 
 
-def locmax(vec, indices=False):
+def locmax(vec: np.ndarray, indices: bool = False) -> np.ndarray:
     """ Return a boolean vector of which points in vec are local maxima.
         End points are peaks if larger than single neighbors.
         if indices=True, return the indices of the True values instead
@@ -69,7 +70,7 @@ def locmax(vec, indices=False):
     return np.nonzero(maxmask)[0] if indices else maxmask
 
 
-def keep_local_maxes(vec):
+def keep_local_maxes(vec: np.ndarray) -> np.ndarray:
     """ Zero out values unless they are local maxima."""
     local_maxes = np.zeros(vec.shape)
     locmaxindices = locmax(vec, indices=True)
@@ -77,7 +78,11 @@ def keep_local_maxes(vec):
     return local_maxes
 
 
-def find_modes(data, threshold=5, window=0):
+def find_modes(
+    data: np.ndarray,
+    threshold: int = 5,
+    window: int = 0,
+) -> tuple[np.ndarray, np.ndarray]:
     """ Find multiple modes in data,  Report a list of (mode, count)
         pairs for every mode greater than or equal to threshold.
         Only local maxima in counts are returned.
@@ -95,7 +100,7 @@ def find_modes(data, threshold=5, window=0):
 class Matcher(object):
     """Provide matching for audfprint fingerprint queries to hash table"""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Set up default object values"""
         # Tolerance window for time differences
         self.window = 1
@@ -121,7 +126,11 @@ class Matcher(object):
         # alignments, stop looking after a while.
         self.max_alignments_per_id = 100
 
-    def _best_count_ids(self, hits, ht):
+    def _best_count_ids(
+        self,
+        hits: np.ndarray,
+        ht: hash_table.HashTable,
+    ) -> tuple[np.ndarray, np.ndarray]:
         """ Return the indexes for the ids with the best counts.
             hits is a matrix as returned by hash_table.get_hits()
             with rows of consisting of [id dtime hash otime] """
@@ -146,7 +155,7 @@ class Matcher(object):
         bestcountsixs = bestcountsixs[:maxdepth]
         return ids[bestcountsixs], rawcounts[bestcountsixs]
 
-    def _unique_match_hashes(self, id, hits, mode):
+    def _unique_match_hashes(self, id: int, hits: np.ndarray, mode: int) -> np.ndarray:
         """ Return the list of unique matching hashes.  Split out so
             we can recover the actual matching hashes for the best
             match if required. """
@@ -168,7 +177,12 @@ class Matcher(object):
         timemask = (1 << timebits) - 1
         return np.c_[matchhasheshash & timemask, matchhasheshash >> timebits]
 
-    def _calculate_time_ranges(self, hits, id, mode):
+    def _calculate_time_ranges(
+        self,
+        hits: np.ndarray,
+        id: int,
+        mode: int,
+    ) -> tuple[int, int]:
         """Given the id and mode, return the actual time support.
            hits is an np.array of id, skew_time, hash, orig_time
            which must be sorted in orig_time order."""
@@ -191,7 +205,13 @@ class Matcher(object):
         #    min_time, max_time))
         return min_time, max_time
 
-    def _exact_match_counts(self, hits, ids, rawcounts, hashesfor=None):
+    def _exact_match_counts(
+        self,
+        hits: np.ndarray,
+        ids: np.ndarray,
+        rawcounts: np.ndarray,
+        hashesfor: int | None = None,
+    ) -> np.ndarray:
         """Find the number of "filtered" (time-consistent) matching hashes
             for each of the promising ids in <ids>.  Return an
             np.array whose rows are [id, filtered_count,
@@ -215,7 +235,7 @@ class Matcher(object):
         nresults = 0
         min_time = 0
         max_time = 0
-        for urank, (id, rawcount) in enumerate(zip(ids, rawcounts)):
+        for urank, (id, rawcount) in enumerate(zip(ids, rawcounts, strict=False)):
             modes, counts = find_modes(alltimes[np.nonzero(allids == id)[0]],
                                        window=self.window,
                                        threshold=self.threshcount)
@@ -236,7 +256,12 @@ class Matcher(object):
                     nresults += 1
         return results[:nresults, :]
 
-    def _approx_match_counts(self, hits, ids, rawcounts):
+    def _approx_match_counts(
+        self,
+        hits: np.ndarray,
+        ids: np.ndarray,
+        rawcounts: np.ndarray,
+    ) -> np.ndarray:
         """ Quick and slightly inaccurate routine to count time-aligned hits.
 
         Only considers largest mode for reference ID match.
@@ -275,11 +300,11 @@ class Matcher(object):
         nresults = 0
         min_time = 0
         max_time = 0
-        for urank, (id, rawcount) in enumerate(zip(ids, rawcounts)):
+        for urank, (track_id, rawcount) in enumerate(zip(ids, rawcounts, strict=False)):
             # Make sure id is an int64 before shifting it up.
-            id = int(id)
+            track_id = int(track_id)
             # Select the subrange of bincounts corresponding to this id
-            bincounts = np.bincount(alltimes[allids == id])
+            bincounts = np.bincount(alltimes[allids == track_id])
             still_looking = True
             # Only consider legit local maxima in bincounts.
             filtered_bincounts = keep_local_maxes(bincounts)
@@ -294,8 +319,8 @@ class Matcher(object):
                                          (mode + self.window + 1)])
                 if self.find_time_range:
                     min_time, max_time = self._calculate_time_ranges(
-                            sorted_hits, id, mode + mintime)
-                results[nresults, :] = [id, count, mode + mintime, rawcount,
+                            sorted_hits, track_id, mode + mintime)
+                results[nresults, :] = [track_id, count, mode + mintime, rawcount,
                                         urank, min_time, max_time]
                 nresults += 1
                 if nresults >= results.shape[0]:
@@ -309,7 +334,12 @@ class Matcher(object):
                     still_looking = False
         return results[:nresults, :]
 
-    def match_hashes(self, ht, hashes, hashesfor=None):
+    def match_hashes(
+        self,
+        ht: hash_table.HashTable,
+        hashes: np.ndarray,
+        hashesfor: int | None = None,
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
         """ Match audio against fingerprint hash table.
             Return top N matches as (id, filteredmatches, timoffs, rawmatches,
             origrank, mintime, maxtime)
@@ -333,12 +363,18 @@ class Matcher(object):
         results = results[(-results[:, 1]).argsort(),]
         if hashesfor is None:
             return results
-        id = results[hashesfor, 0]
+        track_id = results[hashesfor, 0]
         mode = results[hashesfor, 2]
-        hashesforhashes = self._unique_match_hashes(id, hits, mode)
+        hashesforhashes = self._unique_match_hashes(track_id, hits, mode)
         return results, hashesforhashes
 
-    def match_file(self, analyzer, ht, filename, number=None):
+    def match_file(
+        self,
+        analyzer: audfprint_analyze.Analyzer,
+        ht: hash_table.HashTable,
+        filename: str,
+        number: int | None = None,
+    ) -> tuple[np.ndarray, float, int]:
         """ Read in an audio file, calculate its landmarks, query against
             hash table.  Return top N matches as (id, filterdmatchcount,
             timeoffs, rawmatchcount), also length of input file in sec,
@@ -362,7 +398,13 @@ class Matcher(object):
             rslts = rslts[(-rslts[:, 2]).argsort(), :]
         return rslts[:self.max_returns, :], durd, len(q_hashes)
 
-    def file_match_to_msgs(self, analyzer, ht, qry, number=None):
+    def file_match_to_msgs(
+        self,
+        analyzer: audfprint_analyze.Analyzer,
+        ht: hash_table.HashTable,
+        qry: str,
+        number: int | None = None,
+    ) -> list[str]:
         """ Perform a match on a single input file, return list
             of message strings """
         rslts, dur, nhash = self.match_file(analyzer, ht, qry, number)
@@ -396,7 +438,12 @@ class Matcher(object):
                     self.illustrate_match(analyzer, ht, qry)
         return msgrslt
 
-    def illustrate_match(self, analyzer, ht, filename):
+    def illustrate_match(
+        self,
+        analyzer: audfprint_analyze.Analyzer,
+        ht: hash_table.HashTable,
+        filename: str,
+    ) -> np.ndarray:
         """ Show the query fingerprints and the matching ones
             plotted over a spectrogram """
         # Make the spectrogram
@@ -450,7 +497,7 @@ class Matcher(object):
         return results
 
 
-def localtest():
+def localtest() -> None:
     """Function to provide quick test"""
     pat = '/Users/dpwe/projects/shazam/Nine_Lives/*mp3'
     qry = 'query.mp3'

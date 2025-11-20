@@ -4,12 +4,10 @@ This implementation is based on routines from
 https://github.com/tensorflow/models/blob/master/research/audioset/mel_features.py
 """
 
-from __future__ import division
-
 import numpy as np
 
 
-def frame(data, window_length, hop_length):
+def frame(data: np.ndarray, window_length: int, hop_length: int) -> np.ndarray:
   """Convert array into a sequence of successive possibly overlapping frames.
 
   An n-dimensional array of shape (num_samples, ...) is converted into an
@@ -36,7 +34,7 @@ def frame(data, window_length, hop_length):
   return np.lib.stride_tricks.as_strided(data, shape=shape, strides=strides)
 
 
-def periodic_hann(window_length):
+def periodic_hann(window_length: int) -> np.ndarray:
   """Calculate a "periodic" Hann window.
 
   The classic Hann window is defined as a raised cosine that starts and
@@ -59,7 +57,12 @@ def periodic_hann(window_length):
                              np.arange(window_length)))
 
 
-def stft(signal, n_fft, hop_length=None, window=None):
+def stft(
+    signal: np.ndarray,
+    n_fft: int,
+    hop_length: int | None = None,
+    window: int | float | np.ndarray | None = None,
+) -> np.ndarray:
   """Calculate the short-time Fourier transform.
 
   Args:

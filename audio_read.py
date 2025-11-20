@@ -14,21 +14,31 @@
 
 # Copyright (c) 2014, Brian McFee, Matt McVicar, Dawen Liang, Colin Raffel, Douglas Repetto, Dan Ellis.
 #
-# Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted, provided that the above copyright notice and this permission notice appear in all copies.
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
 #
-# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-from __future__ import division
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+# REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+# AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+# INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+# LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+# OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+# PERFORMANCE OF THIS SOFTWARE.
 
 import os
 import re
 import subprocess
 import threading
 import time
+from collections.abc import Iterator
+from types import TracebackType
+from typing import IO
 
 import numpy as np
+
 # For wavread fallback.
 import scipy.io.wavfile as wav
-
 
 try:
     import queue
@@ -44,39 +54,45 @@ except ImportError:
 
 HAVE_FFMPEG = True
 
-def wavread(filename):
-  """Read in audio data from a wav file.  Return d, sr."""
-  # Read in wav file.
-  samplerate, wave_data = wav.read(filename)
-  # Normalize short ints to floats in range [-1..1).
-  data = np.asfarray(wave_data) / 32768.0
-  return data, samplerate
+
+def wavread(filename: str) -> tuple[np.ndarray, int]:
+    """Read in audio data from a wav file.  Return d, sr."""
+    # Read in wav file.
+    samplerate, wave_data = wav.read(filename)
+    # Normalize short ints to floats in range [-1..1).
+    data = np.asfarray(wave_data) / 32768.0
+    return data, samplerate
 
 
-def audio_read(filename, sr=None, channels=None):
+def audio_read(
+    filename: str,
+    sr: int | None = None,
+    channels: int | None = None,
+) -> tuple[np.ndarray, int]:
     """Read a soundfile, return (d, sr)."""
     if HAVE_FFMPEG:
         return audio_read_ffmpeg(filename, sr, channels)
-    else:
-        data, samplerate = wavread(filename)
-        if channels == 1 and len(data.shape) == 2 and data.shape[-1] != 1:
-            # Convert stereo to mono.
-            data = np.mean(data, axis=-1)
-        if sr and sr != samplerate:
-            raise ValueError("Wav file has samplerate %f but %f requested." % (
-                samplerate, sr))
-        return data, samplerate
+    data, samplerate = wavread(filename)
+    if channels == 1 and len(data.shape) == 2 and data.shape[-1] != 1:
+        # Convert stereo to mono.
+        data = np.mean(data, axis=-1)
+    if sr and sr != samplerate:
+        raise ValueError("Wav file has samplerate %f but %f requested." % (samplerate, sr))
+    return data, samplerate
 
 
-def audio_read_ffmpeg(filename, sr=None, channels=None):
+def audio_read_ffmpeg(
+    filename: str,
+    sr: int | None = None,
+    channels: int | None = None,
+) -> tuple[np.ndarray, int]:
     """Read a soundfile, return (d, sr)."""
     # Hacked version of librosa.load and audioread/ff.
     offset = 0.0
     duration = None
     dtype = np.float32
     y = []
-    with FFmpegAudioFile(os.path.realpath(filename),
-                         sample_rate=sr, channels=channels) as input_file:
+    with FFmpegAudioFile(os.path.realpath(filename), sample_rate=sr, channels=channels) as input_file:
         sr = input_file.sample_rate
         channels = input_file.channels
         s_start = int(np.floor(sr * offset) * channels)
@@ -97,10 +113,10 @@ def audio_read_ffmpeg(filename, sr=None, channels=None):
                 break
             if s_end < num_read:
                 # the end is in this frame.  crop.
-                frame = frame[:s_end - num_read_prev]
+                frame = frame[: s_end - num_read_prev]
             if num_read_prev <= s_start < num_read:
                 # beginning is in this frame
-                frame = frame[(s_start - num_read_prev):]
+                frame = frame[(s_start - num_read_prev) :]
             # tack on the current frame
             y.append(frame)
 
@@ -118,7 +134,11 @@ def audio_read_ffmpeg(filename, sr=None, channels=None):
     return (y, sr)
 
 
-def buf_to_float(x, n_bytes=2, dtype=np.float32):
+def buf_to_float(
+    x: bytes | bytearray | memoryview | np.ndarray,
+    n_bytes: int = 2,
+    dtype: np.dtype | type = np.float32,
+) -> np.ndarray:
     """Convert an integer buffer to floating point values.
     This is primarily useful when loading integer-valued wav data
     into numpy arrays.
@@ -136,10 +156,10 @@ def buf_to_float(x, n_bytes=2, dtype=np.float32):
     """
 
     # Invert the scale of the data
-    scale = 1. / float(1 << ((8 * n_bytes) - 1))
+    scale = 1.0 / float(1 << ((8 * n_bytes) - 1))
 
     # Construct the format string
-    fmt = '<i{:d}'.format(n_bytes)
+    fmt = "<i{:d}".format(n_bytes)
 
     # Rescale and format the data buffer
     return scale * np.frombuffer(x, fmt).astype(dtype)
@@ -169,15 +189,15 @@ class QueueReaderThread(threading.Thread):
     over a Queue.
     """
 
-    def __init__(self, fh, blocksize=1024, discard=False):
+    def __init__(self, fh: IO[bytes], blocksize: int = 1024, discard: bool = False) -> None:
         super(QueueReaderThread, self).__init__()
         self.fh = fh
         self.blocksize = blocksize
         self.daemon = True
         self.discard = discard
-        self.queue = None if discard else queue.Queue()
+        self.queue: queue.Queue | None = None if discard else queue.Queue()
 
-    def run(self):
+    def run(self) -> None:
         while True:
             data = self.fh.read(self.blocksize)
             if not self.discard:
@@ -190,21 +210,24 @@ class QueueReaderThread(threading.Thread):
 class FFmpegAudioFile(object):
     """An audio file decoded by the ffmpeg command-line utility."""
 
-    def __init__(self, filename, channels=None, sample_rate=None, block_size=4096):
+    def __init__(
+        self,
+        filename: str,
+        channels: int | None = None,
+        sample_rate: int | None = None,
+        block_size: int = 4096,
+    ) -> None:
         if not os.path.isfile(filename):
-            raise ValueError(filename + " not found.")
-        popen_args = ['ffmpeg', '-i', filename, '-f', 's16le']
+            raise ValueError(f"{filename} not found.")
+        popen_args = ["ffmpeg", "-i", filename, "-f", "s16le"]
         self.channels = channels
         self.sample_rate = sample_rate
         if channels:
-            popen_args.extend(['-ac', str(channels)])
+            popen_args.extend(["-ac", str(channels)])
         if sample_rate:
-            popen_args.extend(['-ar', str(sample_rate)])
-        popen_args.append('-')
-        self.proc = subprocess.Popen(
-                popen_args,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
+            popen_args.extend(["-ar", str(sample_rate)])
+        popen_args.append("-")
+        self.proc = subprocess.Popen(popen_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         # Start another thread to consume the standard output of the
         # process, which contains raw audio data.
@@ -214,8 +237,8 @@ class FFmpegAudioFile(object):
         # Read relevant information from stderr.
         try:
             self._get_info()
-        except ValueError:
-            raise ValueError("Error reading header info from " + filename)
+        except ValueError as err:
+            raise ValueError(f"Error reading header info from {filename}") from err
 
         # Start a separate thread to read the rest of the data from
         # stderr. This (a) avoids filling up the OS buffer and (b)
@@ -223,7 +246,7 @@ class FFmpegAudioFile(object):
         self.stderr_reader = QueueReaderThread(self.proc.stderr)
         self.stderr_reader.start()
 
-    def read_data(self, timeout=10.0):
+    def read_data(self, timeout: float = 10.0) -> Iterator[bytes]:
         """Read blocks of raw PCM data from the file."""
         # Read from stdout in a separate thread and consume data from
         # the queue.
@@ -238,22 +261,19 @@ class FFmpegAudioFile(object):
                 else:
                     # End of file.
                     break
-            except queue.Empty:
+            except queue.Empty as err:
                 # Queue read timed out.
                 end_time = time.time()
                 if not data:
                     if end_time - start_time >= timeout:
                         # Nothing interesting has happened for a while --
                         # FFmpeg is probably hanging.
-                        raise ValueError('ffmpeg output: {}'.format(
-                                ''.join(self.stderr_reader.queue.queue)
-                        ))
-                    else:
-                        start_time = end_time
-                        # Keep waiting.
-                        continue
+                        raise ValueError(f'ffmpeg output: {"".join(self.stderr_reader.queue.queue)}') from err
+                    start_time = end_time
+                    # Keep waiting.
+                    continue
 
-    def _get_info(self):
+    def _get_info(self) -> None:
         """Reads the tool's output from its stderr stream, extracts the
         relevant information, and parses it.
         """
@@ -266,86 +286,76 @@ class FFmpegAudioFile(object):
 
             # In Python 3, result of reading from stderr is bytes.
             if isinstance(line, bytes):
-                line = line.decode('utf8', 'ignore')
+                line = line.decode("utf8", "ignore")
 
             line = line.strip().lower()
 
-            if 'no such file' in line:
-                raise IOError('file not found')
-            elif 'invalid data found' in line:
+            if "no such file" in line:
+                raise IOError("file not found")
+            elif "invalid data found" in line:
                 raise ValueError()
-            elif 'duration:' in line:
+            elif "duration:" in line:
                 out_parts.append(line)
-            elif 'audio:' in line:
+            elif "audio:" in line:
                 out_parts.append(line)
-                self._parse_info(''.join(out_parts))
+                self._parse_info("".join(out_parts))
                 break
 
-    def _parse_info(self, s):
+    def _parse_info(self, s: str) -> None:
         """Given relevant data from the ffmpeg output, set audio
         parameter fields on this object.
         """
-        # Sample rate.
-        match = re.search(r'(\d+) hz', s)
-        if match:
-            self.sample_rate_orig = int(match.group(1))
+        if match := re.search(r"(\d+) hz", s):
+            self.sample_rate_orig = int(match[1])
         else:
             self.sample_rate_orig = 0
         if self.sample_rate is None:
             self.sample_rate = self.sample_rate_orig
 
-        # Channel count.
-        match = re.search(r'hz, ([^,]+),', s)
-        if match:
-            mode = match.group(1)
-            if mode == 'stereo':
+        if match := re.search(r"hz, ([^,]+),", s):
+            mode = match[1]
+            if mode == "stereo":
                 self.channels_orig = 2
+            elif match := re.match(r"(\d+) ", mode):
+                self.channels_orig = int(match[1])
             else:
-                match = re.match(r'(\d+) ', mode)
-                if match:
-                    self.channels_orig = int(match.group(1))
-                else:
-                    self.channels_orig = 1
+                self.channels_orig = 1
         else:
             self.channels_orig = 0
         if self.channels is None:
             self.channels = self.channels_orig
 
-        # Duration.
-        match = re.search(
-                r'duration: (\d+):(\d+):(\d+).(\d)', s
-        )
-        if match:
+        if match := re.search(r"duration: (\d+):(\d+):(\d+).(\d)", s):
             durparts = list(map(int, match.groups()))
-            duration = (
-                    durparts[0] * 60 * 60 +
-                    durparts[1] * 60 +
-                    durparts[2] +
-                    float(durparts[3]) / 10
-            )
+            duration = durparts[0] * 60 * 60 + durparts[1] * 60 + durparts[2] + float(durparts[3]) / 10
             self.duration = duration
         else:
             # No duration found.
             self.duration = 0
 
-    def close(self):
+    def close(self) -> None:
         """Close the ffmpeg process used to perform the decoding."""
         # Kill the process if it is still running.
-        if hasattr(self, 'proc') and self.proc.returncode is None:
+        if hasattr(self, "proc") and self.proc.returncode is None:
             self.proc.kill()
             self.proc.wait()
 
-    def __del__(self):
+    def __del__(self) -> None:
         self.close()
 
     # Iteration.
-    def __iter__(self):
+    def __iter__(self) -> Iterator[bytes]:
         return self.read_data()
 
     # Context manager.
-    def __enter__(self):
+    def __enter__(self) -> "FFmpegAudioFile":
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool:
         self.close()
         return False

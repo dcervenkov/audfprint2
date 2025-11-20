@@ -7,7 +7,6 @@ Class to do the analysis of wave files into hash constellations.
 2014-09-20 Dan Ellis dpwe@ee.columbia.edu
 """
 
-# For glob2hashtable, localtester
 import glob
 import logging
 import os
@@ -15,6 +14,8 @@ import os
 # For reading/writing hashes to file
 import struct
 import time
+from collections.abc import Iterable, Sequence
+from typing import Any
 
 import numpy as np
 import scipy.signal
@@ -35,7 +36,7 @@ PRECOMPEXT = '.afpt'
 PRECOMPPKEXT = '.afpk'
 
 
-def locmax(vec, indices=False):
+def locmax(vec: np.ndarray, indices: bool = False) -> np.ndarray:
     """ Return a boolean vector of which points in vec are local maxima.
         End points are peaks if larger than single neighbors.
         if indices=True, return the indices of the True values instead
@@ -77,7 +78,9 @@ DF_SHIFT = DT_BITS
 DT_MASK = (1 << DT_BITS) - 1
 
 
-def landmarks2hashes(landmarks):
+def landmarks2hashes(
+    landmarks: np.ndarray | Sequence[Sequence[int]]
+) -> np.ndarray:
     """Convert a list of (time, bin1, bin2, dtime) landmarks
     into a list of (time, hash) pairs where the hash combines
     the three remaining values.
@@ -95,7 +98,9 @@ def landmarks2hashes(landmarks):
     return hashes
 
 
-def hashes2landmarks(hashes):
+def hashes2landmarks(
+    hashes: Sequence[tuple[int, int]]
+) -> list[tuple[int, int, int, int]]:
     """Convert the mashed-up landmarks in hashes back into a list
     of (time, bin1, bin2, dtime) tuples.
     """
@@ -121,7 +126,7 @@ class Analyzer(object):
     __sp_len = None
     __sp_vals = []
 
-    def __init__(self, density=DENSITY):
+    def __init__(self, density: float = DENSITY) -> None:
         self.density = density
         self.target_sr = 11025
         self.n_fft = N_FFT
@@ -149,16 +154,22 @@ class Analyzer(object):
         # Control behavior on file reading error
         self.fail_on_error = True
 
-    def spreadpeaksinvector(self, vector, width=4.0):
+    def spreadpeaksinvector(self, vector: np.ndarray, width: float = 4.0) -> np.ndarray:
         """ Create a blurred version of vector, where each of the local maxes
             is spread by a gaussian with SD <width>.
         """
         npts = len(vector)
         peaks = locmax(vector, indices=True)
-        return self.spreadpeaks(zip(peaks, vector[peaks]),
+        return self.spreadpeaks(zip(peaks, vector[peaks], strict=False),
                                 npoints=npts, width=width)
 
-    def spreadpeaks(self, peaks, npoints=None, width=4.0, base=None):
+    def spreadpeaks(
+        self,
+        peaks: Iterable[tuple[int, float]],
+        npoints: int | None = None,
+        width: float = 4.0,
+        base: np.ndarray | None = None,
+    ) -> np.ndarray:
         """ Generate a vector consisting of the max of a set of Gaussian bumps
         :params:
           peaks : list
@@ -195,7 +206,7 @@ class Analyzer(object):
                                                        + npoints - pos])
         return vec
 
-    def _decaying_threshold_fwd_prune(self, sgram, a_dec):
+    def _decaying_threshold_fwd_prune(self, sgram: np.ndarray, a_dec: float) -> np.ndarray:
         """ forward pass of findpeaks
             initial threshold envelope based on peaks in first 10 frames
         """
@@ -216,7 +227,7 @@ class Analyzer(object):
             sdmaxposs = np.nonzero(locmax(s_col) * (s_col > sthresh))[0]
             # Work down list of peaks in order of their absolute value
             # above threshold
-            valspeaks = sorted(zip(s_col[sdmaxposs], sdmaxposs), reverse=True)
+            valspeaks = sorted(zip(s_col[sdmaxposs], sdmaxposs, strict=False), reverse=True)
             for val, peakpos in valspeaks[:self.maxpksperframe]:
                 # What we actually want
                 # sthresh = spreadpeaks([(peakpos, s_col[peakpos])],
@@ -229,7 +240,12 @@ class Analyzer(object):
             sthresh *= a_dec
         return peaks
 
-    def _decaying_threshold_bwd_prune_peaks(self, sgram, peaks, a_dec):
+    def _decaying_threshold_bwd_prune_peaks(
+        self,
+        sgram: np.ndarray,
+        peaks: np.ndarray,
+        a_dec: float,
+    ) -> np.ndarray:
         """ backwards pass of findpeaks """
         scols = np.shape(sgram)[1]
         # Backwards filter to prune peaks
@@ -237,7 +253,7 @@ class Analyzer(object):
         for col in range(scols, 0, -1):
             pkposs = np.nonzero(peaks[:, col - 1])[0]
             peakvals = sgram[pkposs, col - 1]
-            for val, peakpos in sorted(zip(peakvals, pkposs), reverse=True):
+            for val, peakpos in sorted(zip(peakvals, pkposs, strict=False), reverse=True):
                 if val >= sthresh[peakpos]:
                     # Setup the threshold
                     sthresh = self.spreadpeaks([(peakpos, val)], base=sthresh,
@@ -251,7 +267,7 @@ class Analyzer(object):
             sthresh = a_dec * sthresh
         return peaks
 
-    def find_peaks(self, d, sr):
+    def find_peaks(self, d: np.ndarray, sr: int) -> list[tuple[int, int]]:
         """ Find the local peaks in the spectrogram as basis for fingerprints.
             Returns a list of (time_frame, freq_bin) pairs.
 
@@ -305,7 +321,10 @@ class Analyzer(object):
             pklist.extend((col, bin_) for bin_ in np.nonzero(peaks[:, col])[0])
         return pklist
 
-    def peaks2landmarks(self, pklist):
+    def peaks2landmarks(
+        self,
+        pklist: Sequence[tuple[int, int]],
+    ) -> list[tuple[int, int, int, int]]:
         """ Take a list of local peaks in spectrogram
             and form them into pairs as landmarks.
             pklist is a column-sorted list of (col, bin) pairs as created
@@ -337,7 +356,11 @@ class Analyzer(object):
 
         return landmarks
 
-    def wavfile2peaks(self, filename, shifts=None):
+    def wavfile2peaks(
+        self,
+        filename: str,
+        shifts: int | None = None,
+    ) -> list[tuple[int, int]] | list[list[tuple[int, int]]]:
         """ Read a soundfile and return its landmark peaks as a
             list of (time, bin) pairs.  If specified, resample to sr first.
             shifts > 1 causes hashes to be extracted from multiple shifts of
@@ -377,7 +400,7 @@ class Analyzer(object):
         self.soundfilecount += 1
         return peaks
 
-    def wavfile2hashes(self, filename):
+    def wavfile2hashes(self, filename: str) -> np.ndarray:
         """ Read a soundfile and return its fingerprint hashes as a
             list of (time, hash) pairs.  If specified, resample to sr first.
             shifts > 1 causes hashes to be extracted from multiple shifts of
@@ -423,7 +446,7 @@ class Analyzer(object):
 
     # ########## functions to link to actual hash table index database ###### #
 
-    def ingest(self, hashtable, filename):
+    def ingest(self, hashtable: hash_table.HashTable, filename: str) -> tuple[float, int]:
         """ Read an audio file and add it to the database
         :params:
           hashtable : HashTable object
@@ -462,7 +485,7 @@ PEAK_FMT = '<2i'
 PEAK_MAGIC = b'audfprintpeakV00'  # 16 chars, FWIW
 
 
-def hashes_save(hashfilename, hashes):
+def hashes_save(hashfilename: str, hashes: Iterable[tuple[int, int]]) -> None:
     """ Write out a list of (time, hash) pairs as 32 bit ints """
     with open(hashfilename, 'wb') as f:
         f.write(HASH_MAGIC)
@@ -470,7 +493,7 @@ def hashes_save(hashfilename, hashes):
             f.write(struct.pack(HASH_FMT, time_, hash_))
 
 
-def hashes_load(hashfilename):
+def hashes_load(hashfilename: str) -> list[tuple[int, int]]:
     """ Read back a set of hashes written by hashes_save """
     hashes = []
     fmtsize = struct.calcsize(HASH_FMT)
@@ -485,7 +508,7 @@ def hashes_load(hashfilename):
     return hashes
 
 
-def peaks_save(peakfilename, peaks):
+def peaks_save(peakfilename: str, peaks: Iterable[tuple[int, int]]) -> None:
     """ Write out a list of (time, bin) pairs as 32 bit ints """
     with open(peakfilename, 'wb') as f:
         f.write(PEAK_MAGIC)
@@ -493,7 +516,7 @@ def peaks_save(peakfilename, peaks):
             f.write(struct.pack(PEAK_FMT, time_, bin_))
 
 
-def peaks_load(peakfilename):
+def peaks_load(peakfilename: str) -> list[tuple[int, int]]:
     """ Read back a set of (time, bin) pairs written by peaks_save """
     peaks = []
     fmtsize = struct.calcsize(PEAK_FMT)
@@ -514,7 +537,7 @@ def peaks_load(peakfilename):
 extract_features_analyzer = None
 
 
-def extract_features(track_obj, *args, **kwargs):
+def extract_features(track_obj: Any, *args: Any, **kwargs: Any) -> np.ndarray:
     """ Extract the audfprint fingerprint hashes for one file.
     :params:
       track_obj : object
@@ -543,7 +566,7 @@ def extract_features(track_obj, *args, **kwargs):
 g2h_analyzer = None
 
 
-def glob2hashtable(pattern, density=20.0):
+def glob2hashtable(pattern: str, density: float = 20.0) -> hash_table.HashTable:
     """ Build a hash table from the files matching a glob pattern """
     global g2h_analyzer
     if g2h_analyzer is None:
@@ -565,7 +588,7 @@ def glob2hashtable(pattern, density=20.0):
     return ht
 
 
-def local_tester():
+def local_tester() -> None:
     test_fn = '/Users/dpwe/Downloads/carol11k.wav'
     test_ht = hash_table.HashTable()
     test_analyzer = Analyzer()
