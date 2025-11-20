@@ -10,11 +10,11 @@ Fingerprint matching code for audfprint
 import contextlib
 import os
 import time
+from typing import cast
 
 import numpy as np
 import psutil  # type: ignore[import-untyped]
 import scipy.signal  # type: ignore[import-untyped]
-from typing import cast
 
 # Don't sweat failure to import graphics support.
 with contextlib.suppress(Exception):
@@ -22,8 +22,8 @@ with contextlib.suppress(Exception):
     import matplotlib.pyplot as plt
 import logging
 
-from audfprint.core import analyzer, hash_table
-from audfprint.utils import audio, stft
+from audfprint2.core import analyzer, hash_table
+from audfprint2.utils import audio, stft
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("audfprint")

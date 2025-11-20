@@ -2,7 +2,7 @@
 import cProfile
 import pstats
 
-from audfprint import cli
+from audfprint2 import cli
 
 argv = ["match", "-d", "tmp.fpdb.hdf", "data/query.mp3"]
 

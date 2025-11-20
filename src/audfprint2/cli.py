@@ -21,7 +21,7 @@ import joblib  # type: ignore[import-untyped]
 import numpy as np
 
 # TODO: My hash_table implementation
-from audfprint.core import analyzer, hash_table, matcher
+from audfprint2.core import analyzer, hash_table, matcher
 
 time_clock = time.process_time
 logger = logging.getLogger("audfprint")

@@ -22,8 +22,8 @@ import scipy  # type: ignore[import-untyped]
 import scipy.signal  # type: ignore[import-untyped]
 
 # For utility, glob2hashtable
-from audfprint.core import hash_table
-from audfprint.utils import audio, stft
+from audfprint2.core import hash_table
+from audfprint2.utils import audio, stft
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("audfprint")

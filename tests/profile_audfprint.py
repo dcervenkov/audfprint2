@@ -2,7 +2,7 @@
 import cProfile
 import pstats
 
-from audfprint import cli
+from audfprint2 import cli
 
 argv = ["new", "-d", "tmp.fpdb.hdf",
         "data/Nine_Lives/01-Nine_Lives.mp3",
