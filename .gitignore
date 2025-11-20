@@ -55,3 +55,8 @@ docs/_build/
 fpstats
 fpmstats
 tmp.fpdb
+
+# Caches
+.ruff_cache
+.pytest_cache
+.uv-cache
