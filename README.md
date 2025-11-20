@@ -1,7 +1,7 @@
 audfprint-enhanced
 =========
 
-This fork includes HDF support and some code speedup by [Roman Zhymabek](https://github.com/ZhymabekRoman) as well as clean up, minor improvements and PyPI packaging.
+This fork includes HDF support and code speedup by [Roman Zhymabek](https://github.com/ZhymabekRoman) as well as clean up, restructuring, minor improvements, and PyPI packaging.
 
 ---
 
@@ -87,7 +87,7 @@ Usage
 
 Build a database of fingerprints from a set of reference audio files:
 ```
-> python audfprint.py new --dbase fpdbase.pklz Nine_Lives/0*.mp3
+> uv run audfprint new --dbase fpdbase.pklz Nine_Lives/0*.mp3
 Wed Sep 10 10:52:18 2014 ingesting #0:Nine_Lives/01-Nine_Lives.mp3 ...
 Wed Sep 10 10:52:20 2014 ingesting #1:Nine_Lives/02-Falling_In_Love.mp3 ...
 Wed Sep 10 10:52:22 2014 ingesting #2:Nine_Lives/03-Hole_In_My_Soul.mp3 ...
@@ -103,7 +103,7 @@ Saved fprints for 9 files ( 63241 hashes) to fpdbase.pklz
 ```
 Add more reference tracks to an existing database:
 ```
-> python audfprint.py add --dbase fpdbase.pklz Nine_Lives/1*.mp3
+> uv run audfprint add --dbase fpdbase.pklz Nine_Lives/1*.mp3
 Read fprints for 9 files ( 63241 hashes) from fpdbase.pklz
 Wed Sep 10 10:53:14 2014 ingesting #0:Nine_Lives/10-Kiss_Your_Past_Good-bye.mp3 ...
 Wed Sep 10 10:53:16 2014 ingesting #1:Nine_Lives/11-Pink.mp3 ...
@@ -115,7 +115,7 @@ Saved fprints for 13 files ( 90308 hashes) to fpdbase.pklz
 ```
 Match a fragment recorded of music playing in the background against the database:
 ```
-> python audfprint.py match --dbase fpdbase.pklz query.mp3
+> uv run audfprint match --dbase fpdbase.pklz query.mp3
 Read fprints for 13 files ( 90308 hashes) from fpdbase.pklz
 Analyzed query.mp3 of 5.573 s to 204 hashes
 Matched query.mp3 5.573 sec 204 raw hashes as Nine_Lives/05-Full_Circle.mp3 at 50.085 s with 8 of 9 hashes
@@ -125,7 +125,7 @@ The query contained audio from `Nine_Lives/05-Full_Circle.mp3` starting at 50.08
 
 Merge a previously-computed database into an existing one:
 ```
-> python audfprint.py merge --dbase fpdbase.pklz fpdbase0.pklz
+> uv run audfprint merge --dbase fpdbase.pklz fpdbase0.pklz
 Wed Apr  8 18:31:29 2015 Reading hash table fpdbase.pklz
 Read fprints for 4 files ( 126989 hashes) from fpdbase.pklz
 Read fprints for 9 files ( 280424 hashes) from fpdbase0.pklz
@@ -133,7 +133,7 @@ Saved fprints for 13 files ( 407413 hashes) to fpdbase.pklz
 ```
 Merge two existing databases to create a new, third one:
 ```
-> python audfprint.py newmerge --dbase fpdbase_new.pklz fpdbase.pklz fpdbase0.pklz
+> uv run audfprint newmerge --dbase fpdbase_new.pklz fpdbase.pklz fpdbase0.pklz
 Read fprints for 4 files ( 126989 hashes) from fpdbase.pklz
 Read fprints for 9 files ( 280424 hashes) from fpdbase0.pklz
 Saved fprints for 13 files ( 407363 hashes) to fpdbase_new.pklz
@@ -147,7 +147,7 @@ between them that makes them line up, but the exact *time ranges* that match
 in both query and reference files, use `--find-time-range`:
 
 ```
-python audfprint.py match --dbase fpdbase.pklz query.mp3 --find-time-range
+uv run audfprint match --dbase fpdbase.pklz query.mp3 --find-time-range
 Sun Aug  9 18:13:54 2015 Reading hash table fpdbase.pklz
 Read fprints for 9 files ( 158827 hashes) from fpdbase.pklz
 Sun Aug  9 18:13:57 2015 Analyzed #0 query.mp3 of 5.619 s to 928 hashes
@@ -163,8 +163,14 @@ the earliest and latest matches; this proportion is set by
 `--time-quantile` which is 0.01 by default (1% of matches ignored at
 beginning and end of match region when calculating match time range).
 
+Tutorials
+---------
+
+For a complete end-to-end example of batch processing and matching TV ads in recordings, see [docs/batch-processing-tutorial.md](docs/batch-processing-tutorial.md).
+
 Scaling
 -------
+
 The fingerprint database records 2^20 (~1M) distinct fingerprints, with (by default) 100 entries for each fingerprint bucket.  When the bucket fills, track entries are dropped at random; since matching depends only on making a minimum number of matches, but no particular match, dropping some of the more popular ones does not prevent matching.  The Matlab version has been successfully used for databases of 100k+ tracks.  Reducing the hash density (`--density`) leads to smaller reference database size, and the capacity to record more reference items before buckets begin to fill; a density of 7.0 works well.
 
 Times (in units of 256 samples, i.e., 23 ms at the default 11kHz sampling rate) are stored in the bottom 14 bits of each database entry, meaning that times larger than 2^14*0.023 = 380 sec, or about 6 mins, are aliased.  If you want to correctly identify time offsets in tracks longer than this, you need to use a larger `--maxtimebits`; e.g. `--maxtimebits 16` increases the time range to 65,536 frames, or about 25 minutes at 11 kHz.  The trade-off is that the remaining bits in each 32 bit entry (i.e., 18 bits for the default 14 bit times) are used to store the track ID.  Thus, by default, the database can only remember 2^18 = 262k tracks; using a larger `--maxtimebits` will reduce this; similarly, you can increase the number of distinct tracks by reducing `--maxtimebits`, which doesn't prevent matching tracks, but progressively reduces discrimination as the number of distinct time slots reduces (and can make the reported time offsets, and time ranges for `--find-time-ranges`, completely wrong for longer tracks).
