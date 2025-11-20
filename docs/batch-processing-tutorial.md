@@ -11,7 +11,7 @@ This version of audfprint relies on `ffmpeg` to read audio files.  You should ch
 Install [uv](https://github.com/astral-sh/uv) and set up the project dependencies:
 
 ```shell
-$ uv sync --group dev
+uv sync --group dev
 ```
 
 ## Steps
@@ -19,14 +19,14 @@ $ uv sync --group dev
 We will make plain text list files containing paths to all the reference advert files, and the TV shows to be searched.  These files can be audio or video; as long as `ffmpeg` can read them, we should be OK.
 
 ```shell
-$ ls -1 /2/data/all_PHL_political_ads/*.mp4 > ads.list
-$ ls -1 /2/data/20140924_daily_news_programming/*.mp4 > shows.list
+ls -1 /2/data/all_PHL_political_ads/*.mp4 > ads.list
+ls -1 /2/data/20140924_daily_news_programming/*.mp4 > shows.list
 ```
 
 Build the reference database of known ads.  This creates `ads.db` in the current directory.  Since the total time of the reference ads is usually much smaller than the shows we're searching, this generally takes an insignificant proportion of the total time (e.g. 3 min per 100 ads).
 
 ```shell
-$ uv run audfprint new \
+uv run audfprint new \
     --dbase ads.db \
     --density 100 \
     --samplerate 11025 \
@@ -37,7 +37,7 @@ $ uv run audfprint new \
 Precompute the landmark features of each show.  This writes a data file corresponding to each input file under `precomp/` in the current directory.  We run with `--ncores 4` to run on 4 cores in parallel.  This step takes around two-thirds of the total time, maybe 30 mins per 100 shows.
 
 ```shell
-$ uv run audfprint precompute \
+uv run audfprint precompute \
     --samplerate 11025 \
     --density 100 \
     --shifts 1 \
@@ -49,8 +49,8 @@ $ uv run audfprint precompute \
 Do the matching of the precomputed landmarks against the reference database.  This step takes the remaining one-third of the time, or around 15 mins per 100 shows.
 
 ```shell
-$ find precomp/ -name "*.afpt" > precomp.list
-$ uv run audfprint match \
+find precomp/ -name "*.afpt" > precomp.list
+uv run audfprint match \
     --dbase ads.db \
     --match-win 2 \
     --min-count 200 \
@@ -64,7 +64,7 @@ $ uv run audfprint match \
 Filter the output file written by the matching to extract the 4 fields we're interested in: the show name, the time of the start of the match (in seconds since the beginning of the show), the name of the matching ad, and the "match score" (count of common landmarks):
 
 ```shell
-$ grep Matched matches.out \
+grep Matched matches.out \
     | sed -e "s@precomp@@" -e "s@/2/data/@@g" \
           -e "s/\.mp4//" -e "s/\.afpt//" \
     | awk '{print $2 "\t" (-1*$11) "\t" $9 "\t" $14}' \

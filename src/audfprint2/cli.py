@@ -8,19 +8,20 @@ Port of the Matlab implementation.
 """
 
 import argparse
+import concurrent.futures
 import contextlib
 import logging
 import multiprocessing
 import os
 import time
 from collections.abc import Iterable, Iterator, Sequence
+from itertools import repeat
 from multiprocessing.connection import Connection
 from typing import Any, Callable, cast
 
-import joblib  # type: ignore[import-untyped]
 import numpy as np
 
-# TODO: My hash_table implementation
+# My hash_table implementation
 from audfprint2.core import analyzer, hash_table, matcher
 
 time_clock = time.process_time
@@ -86,10 +87,7 @@ def file_precompute_peaks_or_hashes(
     )
     root = os.path.splitext(relname)[0]
     if precompext is None:
-        if hashes_not_peaks:
-            precompext = analyzer.PRECOMPEXT
-        else:
-            precompext = analyzer.PRECOMPPKEXT
+        precompext = analyzer.PRECOMPEXT if hashes_not_peaks else analyzer.PRECOMPPKEXT
     opfname = os.path.join(precompdir, root + precompext)
     if skip_existing and os.path.isfile(opfname):
         return [f"file {opfname} exists (and --skip-existing); skipping"]
@@ -309,7 +307,7 @@ def matcher_file_match_to_msgs(
     hash_tab: hash_table.HashTable,
     filename: str,
 ) -> list[str]:
-    """Cover for matcher.file_match_to_msgs so it can be passed to joblib"""
+    """Cover for matcher.file_match_to_msgs so it can be passed to a process pool"""
     return matcher_obj.file_match_to_msgs(analyzer_obj, hash_tab, filename)
 
 
@@ -327,43 +325,43 @@ def do_cmd_multiproc(
     ncores: int = 1,
 ) -> None:
     """ Run the actual command, using multiple processors """
-    if cmd in {'precompute', 'new', 'add'}:
+    if cmd == 'precompute':
         if analyzer_obj is None:
             raise ValueError("analyzer required for multiprocess operations")
-        if cmd in {'new', 'add'} and hash_tab is None:
-            raise ValueError("hash table required for add/new")
-        # precompute fingerprints with joblib
-        msgslist = joblib.Parallel(n_jobs=ncores)(
-                joblib.delayed(file_precompute)(
-                    analyzer_obj, file, outdir, type, skip_existing,
-                    strip_prefix=strip_prefix
-                )
-                for file in filename_iter
-        )
-        # Collapse into a single list of messages
-        for msgs in msgslist:
-            logger.debug(msgs)
+        # precompute fingerprints with concurrent futures
+        with concurrent.futures.ProcessPoolExecutor(max_workers=ncores) as executor:
+            msgs_iter = executor.map(
+                file_precompute,
+                repeat(analyzer_obj),
+                filename_iter,
+                repeat(outdir),
+                repeat(type),
+                repeat(skip_existing),
+                repeat(strip_prefix),
+            )
+            for msgs in msgs_iter:
+                logger.debug(msgs)
+
+    elif cmd in {'new', 'add'}:
+        # Ingest files into the hash table in parallel
+        if analyzer_obj is None or hash_tab is None:
+            raise ValueError("analyzer and hash table required for add/new")
+        multiproc_add(analyzer_obj, hash_tab, filename_iter, report, ncores)
 
     elif cmd == 'match':
         if analyzer_obj is None or matcher_obj is None or hash_tab is None:
             raise ValueError("analyzer, matcher, and hash table required for match")
         # Running queries in parallel
-        msgslist = joblib.Parallel(n_jobs=ncores)(
-                # Would use matcher.file_match_to_msgs(), but you
-                # can't use joblib on an instance method
-                joblib.delayed(matcher_file_match_to_msgs)(matcher_obj, analyzer_obj,
-                                                           hash_tab, filename)
-                for filename in filename_iter
-        )
-        for msgs in msgslist:
-            logger.debug(msgs)
-
-    elif cmd in {'new', 'add'}:
-        # We add by forking multiple parallel threads each running
-        # analyzers over different subsets of the file list
-        if analyzer_obj is None or hash_tab is None:
-            raise ValueError("analyzer and hash table required for add/new")
-        multiproc_add(analyzer_obj, hash_tab, filename_iter, report, ncores)
+        with concurrent.futures.ProcessPoolExecutor(max_workers=ncores) as executor:
+            msgs_iter = executor.map(
+                matcher_file_match_to_msgs,
+                repeat(matcher_obj),
+                repeat(analyzer_obj),
+                repeat(hash_tab),
+                filename_iter,
+            )
+            for msgs in msgs_iter:
+                logger.debug(msgs)
 
     else:
         # This is not a multiproc command
