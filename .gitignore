@@ -41,6 +41,7 @@ coverage.xml
 .mr.developer.cfg
 .project
 .pydevproject
+.vscode
 
 # Rope
 .ropeproject
@@ -60,3 +61,7 @@ tmp.fpdb
 .ruff_cache
 .pytest_cache
 .uv-cache
+
+# Databases
+*.hdf
+*.pklz
