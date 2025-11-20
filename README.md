@@ -1,4 +1,4 @@
-audfprint-enhanced
+audfprint2
 =========
 
 This fork includes HDF support and code speedup by [Roman Zhymabek](https://github.com/ZhymabekRoman) as well as clean up, restructuring, minor improvements, and PyPI packaging.
