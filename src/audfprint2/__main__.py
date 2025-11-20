@@ -1,4 +1,4 @@
-"""Command-line interface entry point for audfprint."""
+"""Command-line interface entry point for audfprint2."""
 
 from audfprint2.cli import main
 

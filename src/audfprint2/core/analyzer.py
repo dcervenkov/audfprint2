@@ -1,6 +1,6 @@
 # coding=utf-8
 """
-audfprint_analyze.py
+audfprint2_analyze.py
 
 Class to do the analysis of wave files into hash constellations.
 
@@ -26,7 +26,7 @@ from audfprint2.core import hash_table
 from audfprint2.utils import audio, stft
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("audfprint")
+logger = logging.getLogger("audfprint2")
 
 # ############### Globals ############### #
 # Special extension indicating precomputed fingerprint

@@ -1,5 +1,5 @@
 """
-audfprint.py
+audfprint2.py
 
 Implementation of acoustic-landmark-based robust fingerprinting.
 Port of the Matlab implementation.
@@ -24,7 +24,7 @@ import numpy as np
 from audfprint2.core import analyzer, hash_table, matcher
 
 time_clock = time.process_time
-logger = logging.getLogger("audfprint")
+logger = logging.getLogger("audfprint2")
 
 
 def filename_list_iterator(
@@ -448,7 +448,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"audfprint-enhanced {__version__}",
+        version=f"audfprint2-enhanced {__version__}",
         help="Show the program's version number and exit.",
     )
     parser.add_argument(

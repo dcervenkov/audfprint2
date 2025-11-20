@@ -3,7 +3,7 @@
 hash_table.py
 
 Python implementation of the very simple, fixed-array hash table
-used for the audfprint fingerprinter.
+used for the audfprint2 fingerprinter.
 
 2014-05-25 Dan Ellis dpwe@ee.columbia.edu
 """

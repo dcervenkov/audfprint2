@@ -1,8 +1,8 @@
 # coding=utf-8
 """
-audfprint_match.py
+audfprint2_match.py
 
-Fingerprint matching code for audfprint
+Fingerprint matching code for audfprint2
 
 2014-05-26 Dan Ellis dpwe@ee.columbia.edu
 """
@@ -26,7 +26,7 @@ from audfprint2.core import analyzer, hash_table
 from audfprint2.utils import audio, stft
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("audfprint")
+logger = logging.getLogger("audfprint2")
 TRACE_LEVEL = logging.DEBUG - 5
 
 
@@ -57,7 +57,7 @@ def locmax(vec: np.ndarray, indices: bool = False) -> np.ndarray:
     """ Return a boolean vector of which points in vec are local maxima.
         End points are peaks if larger than single neighbors.
         if indices=True, return the indices of the True values instead
-        of the boolean vector. (originally from audfprint.py)
+        of the boolean vector. (originally from audfprint2.py)
     """
     # x[-1]-1 means last value can be a peak
     # nbr = np.greater_equal(np.r_[x, x[-1]-1], np.r_[x[0], x])
@@ -97,7 +97,7 @@ def find_modes(
 
 
 class Matcher(object):
-    """Provide matching for audfprint fingerprint queries to hash table"""
+    """Provide matching for audfprint2 fingerprint queries to hash table"""
 
     def __init__(self) -> None:
         """Set up default object values"""
