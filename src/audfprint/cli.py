@@ -19,11 +19,8 @@ from typing import Any
 
 import joblib  # type: ignore[import-untyped]
 
-import audfprint_analyze
-import audfprint_match
-
 # TODO: My hash_table implementation
-import hash_table
+from audfprint.core import analyzer, hash_table, matcher
 
 time_clock = time.process_time
 logger = logging.getLogger("audfprint")
@@ -60,7 +57,7 @@ def ensure_dir(dirname: str) -> None:
 # basic operations, each in a separate function
 
 def file_precompute_peaks_or_hashes(
-    analyzer: audfprint_analyze.Analyzer,
+    analyzer_obj: analyzer.Analyzer,
     filename: str,
     precompdir: str,
     precompext: str | None = None,
@@ -89,21 +86,21 @@ def file_precompute_peaks_or_hashes(
     root = os.path.splitext(relname)[0]
     if precompext is None:
         if hashes_not_peaks:
-            precompext = audfprint_analyze.PRECOMPEXT
+            precompext = analyzer.PRECOMPEXT
         else:
-            precompext = audfprint_analyze.PRECOMPPKEXT
+            precompext = analyzer.PRECOMPPKEXT
     opfname = os.path.join(precompdir, root + precompext)
     if skip_existing and os.path.isfile(opfname):
         return [f"file {opfname} exists (and --skip-existing); skipping"]
     # Do the analysis
     if hashes_not_peaks:
         feature_type = "hashes"
-        saver = audfprint_analyze.hashes_save
-        output = analyzer.wavfile2hashes(filename)
+        saver = analyzer.hashes_save
+        output = analyzer_obj.wavfile2hashes(filename)
     else:
         feature_type = "peaks"
-        saver = audfprint_analyze.peaks_save
-        output = analyzer.wavfile2peaks(filename)
+        saver = analyzer.peaks_save
+        output = analyzer_obj.wavfile2peaks(filename)
     # save the hashes or peaks file
     if len(output) == 0:
         message = f"Zero length analysis for {filename} -- not saving."
@@ -115,13 +112,13 @@ def file_precompute_peaks_or_hashes(
         message = f"wrote {opfname}" + " ( %d %s, %.3f sec)" % (
             len(output),
             feature_type,
-            analyzer.soundfiledur,
+            analyzer_obj.soundfiledur,
         )
     return [message]
 
 
 def file_precompute(
-    analyzer: audfprint_analyze.Analyzer,
+    analyzer_obj: analyzer.Analyzer,
     filename: str,
     precompdir: str,
     type: str = 'peaks',
@@ -132,14 +129,14 @@ def file_precompute(
         of message strings """
     logger.debug(time.ctime(), "precomputing", type, "for", filename, "...")
     hashes_not_peaks = (type == 'hashes')
-    return file_precompute_peaks_or_hashes(analyzer, filename, precompdir,
+    return file_precompute_peaks_or_hashes(analyzer_obj, filename, precompdir,
                                            hashes_not_peaks=hashes_not_peaks,
                                            skip_existing=skip_existing,
                                            strip_prefix=strip_prefix)
 
 
 def make_ht_from_list(
-    analyzer: audfprint_analyze.Analyzer,
+    analyzer_obj: analyzer.Analyzer,
     filelist: Sequence[str],
     hashbits: int,
     depth: int,
@@ -153,7 +150,7 @@ def make_ht_from_list(
     ht = hash_table.HashTable(hashbits=hashbits, depth=depth, maxtime=maxtime)
     # Add in the files
     for filename in filelist:
-        hashes = analyzer.wavfile2hashes(filename)
+        hashes = analyzer_obj.wavfile2hashes(filename)
         ht.store(filename, hashes)
     # Pass back to caller
     if pipe:
@@ -164,10 +161,10 @@ def make_ht_from_list(
 
 def do_cmd(
     cmd: str,
-    analyzer: audfprint_analyze.Analyzer | None,
+    analyzer_obj: analyzer.Analyzer | None,
     hash_tab: hash_table.HashTable | None,
     filename_iter: Iterable[str],
-    matcher: audfprint_match.Matcher | None,
+    matcher_obj: matcher.Matcher | None,
     outdir: str,
     type: str,
     skip_existing: bool = False,
@@ -192,7 +189,7 @@ def do_cmd(
         for filename in filename_iter:
             logger.debug(
                 file_precompute(
-                    analyzer, filename, outdir, type,
+                    analyzer_obj, filename, outdir, type,
                     skip_existing=skip_existing, strip_prefix=strip_prefix
                 )
             )
@@ -200,7 +197,7 @@ def do_cmd(
     elif cmd == 'match':
         # Running query, single-core mode
         for num, filename in enumerate(filename_iter):
-            msgs = matcher.file_match_to_msgs(analyzer, hash_tab, filename, num)
+            msgs = matcher_obj.file_match_to_msgs(analyzer_obj, hash_tab, filename, num)
             for msg in msgs:
                 logger.debug(msg)
 
@@ -211,12 +208,12 @@ def do_cmd(
             logger.debug(
                 f"{time.ctime()} ingesting #{ix}: {filename} ..."
             )
-            dur, nhash = analyzer.ingest(hash_tab, filename)
+            dur, nhash = analyzer_obj.ingest(hash_tab, filename)
             tothashes += nhash
 
         logger.debug(
             f"Added {tothashes} hashes "
-            f"({tothashes / float(analyzer.soundfiletotaldur):.1f} hashes/sec)"
+            f"({tothashes / float(analyzer_obj.soundfiletotaldur):.1f} hashes/sec)"
         )
     elif cmd == 'remove':
         # Removing files from hash table.
@@ -231,7 +228,7 @@ def do_cmd(
 
 
 def multiproc_add(
-    analyzer: audfprint_analyze.Analyzer,
+    analyzer_obj: analyzer.Analyzer,
     hash_tab: hash_table.HashTable,
     filename_iter: Iterable[str],
     report: Any | None,
@@ -254,7 +251,7 @@ def multiproc_add(
     for ix in range(ncores):
         rx[ix], tx[ix] = multiprocessing.Pipe(False)
         pr[ix] = multiprocessing.Process(target=make_ht_from_list,
-                                         args=(analyzer, filelists[ix],
+                                         args=(analyzer_obj, filelists[ix],
                                                hash_tab.hashbits,
                                                hash_tab.depth,
                                                (1 << hash_tab.maxtimebits),
@@ -275,21 +272,21 @@ def multiproc_add(
 
 
 def matcher_file_match_to_msgs(
-    matcher: audfprint_match.Matcher,
-    analyzer: audfprint_analyze.Analyzer,
+    matcher_obj: matcher.Matcher,
+    analyzer_obj: analyzer.Analyzer,
     hash_tab: hash_table.HashTable,
     filename: str,
 ) -> list[str]:
     """Cover for matcher.file_match_to_msgs so it can be passed to joblib"""
-    return matcher.file_match_to_msgs(analyzer, hash_tab, filename)
+    return matcher_obj.file_match_to_msgs(analyzer_obj, hash_tab, filename)
 
 
 def do_cmd_multiproc(
     cmd: str,
-    analyzer: audfprint_analyze.Analyzer | None,
+    analyzer_obj: analyzer.Analyzer | None,
     hash_tab: hash_table.HashTable | None,
     filename_iter: Iterable[str],
-    matcher: audfprint_match.Matcher | None,
+    matcher_obj: matcher.Matcher | None,
     outdir: str,
     type: str,
     report: Any | None = None,
@@ -302,7 +299,7 @@ def do_cmd_multiproc(
         # precompute fingerprints with joblib
         msgslist = joblib.Parallel(n_jobs=ncores)(
                 joblib.delayed(file_precompute)(
-                    analyzer, file, outdir, type, skip_existing,
+                    analyzer_obj, file, outdir, type, skip_existing,
                     strip_prefix=strip_prefix
                 )
                 for file in filename_iter
@@ -316,7 +313,7 @@ def do_cmd_multiproc(
         msgslist = joblib.Parallel(n_jobs=ncores)(
                 # Would use matcher.file_match_to_msgs(), but you
                 # can't use joblib on an instance method
-                joblib.delayed(matcher_file_match_to_msgs)(matcher, analyzer,
+                joblib.delayed(matcher_file_match_to_msgs)(matcher_obj, analyzer_obj,
                                                            hash_tab, filename)
                 for filename in filename_iter
         )
@@ -326,7 +323,7 @@ def do_cmd_multiproc(
     elif cmd in {'new', 'add'}:
         # We add by forking multiple parallel threads each running
         # analyzers over different subsets of the file list
-        multiproc_add(analyzer, hash_tab, filename_iter, report, ncores)
+        multiproc_add(analyzer_obj, hash_tab, filename_iter, report, ncores)
 
     else:
         # This is not a multiproc command
@@ -343,26 +340,26 @@ def setup_analyzer(
     shifts: int,
     samplerate: int,
     continue_on_error: bool,
-) -> audfprint_analyze.Analyzer:
+) -> analyzer.Analyzer:
     """Create a new analyzer object, taking values from docopts args"""
     # Create analyzer object; parameters will get set below
-    analyzer = audfprint_analyze.Analyzer()
+    analyzer_obj = analyzer.Analyzer()
     # Read parameters from command line/docopts
-    analyzer.density = density
-    analyzer.maxpksperframe = pks_per_frame
-    analyzer.maxpairsperpeak = fanout
-    analyzer.f_sd = freq_sd
-    analyzer.shifts = shifts
+    analyzer_obj.density = density
+    analyzer_obj.maxpksperframe = pks_per_frame
+    analyzer_obj.maxpairsperpeak = fanout
+    analyzer_obj.f_sd = freq_sd
+    analyzer_obj.shifts = shifts
     # fixed - 512 pt FFT with 256 pt hop at 11025 Hz
-    analyzer.target_sr = samplerate
-    analyzer.n_fft = 512
-    analyzer.n_hop = analyzer.n_fft // 2
+    analyzer_obj.target_sr = samplerate
+    analyzer_obj.n_fft = 512
+    analyzer_obj.n_hop = analyzer_obj.n_fft // 2
     # set default value for shifts depending on mode
-    if analyzer.shifts == 0:
+    if analyzer_obj.shifts == 0:
         # Default shift is 4 for match, otherwise 1
-        analyzer.shifts = 4 if is_match else 1
-    analyzer.fail_on_error = not continue_on_error
-    return analyzer
+        analyzer_obj.shifts = 4 if is_match else 1
+    analyzer_obj.fail_on_error = not continue_on_error
+    return analyzer_obj
 
 
 def setup_matcher(
@@ -376,20 +373,20 @@ def setup_matcher(
     sortbytime: bool,
     illustrate: bool,
     illustrate_hpf: bool,
-) -> audfprint_match.Matcher:
+) -> matcher.Matcher:
     """Create a new matcher objects, set parameters from docopt structure"""
-    matcher = audfprint_match.Matcher()
-    matcher.window = match_win
-    matcher.threshcount = min_count
-    matcher.max_returns = max_matches
-    matcher.search_depth = search_depth
-    matcher.sort_by_time = sortbytime
-    matcher.exact_count = exact_count | illustrate | illustrate_hpf
-    matcher.illustrate = illustrate | illustrate_hpf
-    matcher.illustrate_hpf = illustrate_hpf
-    matcher.find_time_range = find_time_range
-    matcher.time_quantile = time_quantile
-    return matcher
+    matcher_obj = matcher.Matcher()
+    matcher_obj.window = match_win
+    matcher_obj.threshcount = min_count
+    matcher_obj.max_returns = max_matches
+    matcher_obj.search_depth = search_depth
+    matcher_obj.sort_by_time = sortbytime
+    matcher_obj.exact_count = exact_count | illustrate | illustrate_hpf
+    matcher_obj.illustrate = illustrate | illustrate_hpf
+    matcher_obj.illustrate_hpf = illustrate_hpf
+    matcher_obj.find_time_range = find_time_range
+    matcher_obj.time_quantile = time_quantile
+    return matcher_obj
 
 
 __version__ = 20251119
@@ -551,7 +548,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     maxtimebits = args.maxtimebits if args.maxtimebits is not None else hash_table._bitsfor(args.maxtime)
 
     # Setup the analyzer if we're using one (i.e., unless "merge")
-    analyzer = setup_analyzer(
+    analyzer_obj = setup_analyzer(
         args.density,
         args.cmd == "match",
         args.pks_per_frame,
@@ -579,22 +576,22 @@ def main(argv: Sequence[str] | None = None) -> None:
                     depth=args.bucketsize,
                     maxtime=(1 << maxtimebits))
             # Set its samplerate param
-            if analyzer:
-                hash_tab.params['samplerate'] = analyzer.target_sr
+            if analyzer_obj:
+                hash_tab.params['samplerate'] = analyzer_obj.target_sr
 
         else:
             logger.debug(f"{time.ctime()} Reading hash table {args.dbase}")
             hash_tab = hash_table.HashTable(args.dbase)
-            if analyzer and 'samplerate' in hash_tab.params \
-                    and hash_tab.params['samplerate'] != analyzer.target_sr:
-                logger.debug("db samplerate overridden to ", analyzer.target_sr)
+            if analyzer_obj and 'samplerate' in hash_tab.params \
+                    and hash_tab.params['samplerate'] != analyzer_obj.target_sr:
+                logger.debug("db samplerate overridden to ", analyzer_obj.target_sr)
     else:
         # The command IS precompute
         # dummy empty hash table
         hash_tab = None
 
     # Create a matcher
-    matcher = setup_matcher(
+    matcher_obj = setup_matcher(
         args.match_win,
         args.search_depth,
         args.min_count,
@@ -617,24 +614,24 @@ def main(argv: Sequence[str] | None = None) -> None:
     # How many processors to use (multiprocessing)
     if args.ncores > 1 and args.cmd not in ["merge", "newmerge", "list", "remove"]:
         # merge/newmerge/list/remove are always single-thread processes
-        do_cmd_multiproc(args.cmd, analyzer, hash_tab, filename_iter,
-                         matcher, args.precompdir,
+        do_cmd_multiproc(args.cmd, analyzer_obj, hash_tab, filename_iter,
+                         matcher_obj, args.precompdir,
                          precomp_type,
                          skip_existing=args.skip_existing,
                          strip_prefix=args.wavdir,
                          ncores=args.ncores)
     else:
-        do_cmd(args.cmd, analyzer, hash_tab, filename_iter,
-               matcher, args.precompdir, precomp_type,
+        do_cmd(args.cmd, analyzer_obj, hash_tab, filename_iter,
+               matcher_obj, args.precompdir, precomp_type,
                skip_existing=args.skip_existing,
                strip_prefix=args.wavdir)
 
     elapsedtime = time_clock() - initticks
-    if analyzer and analyzer.soundfiletotaldur > 0.:
+    if analyzer_obj and analyzer_obj.soundfiletotaldur > 0.:
         logger.debug("Processed "
               + "%d files (%.1f s total dur) in %.1f s sec = %.3f x RT" \
-              % (analyzer.soundfilecount, analyzer.soundfiletotaldur,
-                 elapsedtime, (elapsedtime / analyzer.soundfiletotaldur)))
+              % (analyzer_obj.soundfilecount, analyzer_obj.soundfiletotaldur,
+                 elapsedtime, (elapsedtime / analyzer_obj.soundfiletotaldur)))
 
     # Save the hash table file if it has been modified
     if hash_tab and hash_tab.dirty:

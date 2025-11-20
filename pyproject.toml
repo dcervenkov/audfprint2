@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.scripts]
-audfprint = "audfprint:main"
+audfprint = "audfprint.cli:main"
 
 [dependency-groups]
 dev = [
@@ -33,14 +33,10 @@ dev = [
 ]
 
 [tool.setuptools]
-py-modules = [
-    "audfprint",
-    "audfprint_analyze",
-    "audfprint_match",
-    "audio_read",
-    "hash_table",
-    "stft",
-]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.ruff]
 target-version = "py311"

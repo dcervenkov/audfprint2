@@ -20,11 +20,9 @@ from typing import Any
 import numpy as np
 import scipy.signal
 
-import audio_read
-
 # For utility, glob2hashtable
-import hash_table
-import stft
+from audfprint.core import hash_table
+from audfprint.utils import audio, stft
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("audfprint")
@@ -373,7 +371,7 @@ class Analyzer(object):
         else:
             try:
                 # [d, sr] = librosa.load(filename, sr=self.target_sr)
-                d, sr = audio_read.audio_read(filename, sr=self.target_sr, channels=1)
+                d, sr = audio.audio_read(filename, sr=self.target_sr, channels=1)
             except Exception as e:  # audioread.NoBackendError:
                 message = f"wavfile2peaks: Error reading {filename}"
                 if self.fail_on_error:

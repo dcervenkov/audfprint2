@@ -2,8 +2,7 @@
 import cProfile
 import pstats
 
-# noinspection PyUnresolvedReferences
-import audfprint
+from audfprint import cli
 
 argv = ["new", "-d", "tmp.fpdb.hdf",
         "data/Nine_Lives/01-Nine_Lives.mp3",
@@ -20,7 +19,7 @@ argv = ["new", "-d", "tmp.fpdb.hdf",
         "data/Nine_Lives/12-Attitude_Adjustment.mp3",
         "data/Nine_Lives/13-Fallen_Angels.mp3"]
 
-cProfile.run('audfprint.main(argv)', 'fpstats')
+cProfile.run('cli.main(argv)', 'fpstats')
 
 p = pstats.Stats('fpstats')
 

@@ -21,10 +21,8 @@ with contextlib.suppress(Exception):
     import matplotlib.pyplot as plt
 import logging
 
-import audfprint_analyze
-import audio_read
-import hash_table
-import stft
+from audfprint.core import analyzer, hash_table
+from audfprint.utils import audio, stft
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("audfprint")
@@ -370,7 +368,7 @@ class Matcher(object):
 
     def match_file(
         self,
-        analyzer: audfprint_analyze.Analyzer,
+        analyzer_obj: analyzer.Analyzer,
         ht: hash_table.HashTable,
         filename: str,
         number: int | None = None,
@@ -380,12 +378,12 @@ class Matcher(object):
             timeoffs, rawmatchcount), also length of input file in sec,
             and count of raw query hashes extracted
         """
-        q_hashes = analyzer.wavfile2hashes(filename)
+        q_hashes = analyzer_obj.wavfile2hashes(filename)
         # Fake durations as largest hash time
         if len(q_hashes) == 0:
             durd = 0.0
         else:
-            durd = analyzer.n_hop * q_hashes[-1][0] / analyzer.target_sr
+            durd = analyzer_obj.n_hop * q_hashes[-1][0] / analyzer_obj.target_sr
 
         numberstring = "#%d" % number if number is not None else ""
         logger.debug("%s Analyzed %s %s of %.3f s to %d hashes",
@@ -400,15 +398,15 @@ class Matcher(object):
 
     def file_match_to_msgs(
         self,
-        analyzer: audfprint_analyze.Analyzer,
+        analyzer_obj: analyzer.Analyzer,
         ht: hash_table.HashTable,
         qry: str,
         number: int | None = None,
     ) -> list[str]:
         """ Perform a match on a single input file, return list
             of message strings """
-        rslts, dur, nhash = self.match_file(analyzer, ht, qry, number)
-        t_hop = analyzer.n_hop / analyzer.target_sr
+        rslts, dur, nhash = self.match_file(analyzer_obj, ht, qry, number)
+        t_hop = analyzer_obj.n_hop / analyzer_obj.target_sr
         show_verbose = logger.isEnabledFor(logging.DEBUG)
         qrymsg = f"{qry} {dur:.1f} sec {nhash} raw hashes" if show_verbose else qry
         msgrslt = []
@@ -435,12 +433,12 @@ class Matcher(object):
                 else:
                     msgrslt.append(f"{qrymsg}\t{ht.names[tophitid][:]}")
                 if self.illustrate:
-                    self.illustrate_match(analyzer, ht, qry)
+                    self.illustrate_match(analyzer_obj, ht, qry)
         return msgrslt
 
     def illustrate_match(
         self,
-        analyzer: audfprint_analyze.Analyzer,
+        analyzer_obj: analyzer.Analyzer,
         ht: hash_table.HashTable,
         filename: str,
     ) -> np.ndarray:
@@ -448,10 +446,10 @@ class Matcher(object):
             plotted over a spectrogram """
         # Make the spectrogram
         # d, sr = librosa.load(filename, sr=analyzer.target_sr)
-        d, sr = audio_read.audio_read(filename, sr=analyzer.target_sr, channels=1)
-        sgram = np.abs(stft.stft(d, n_fft=analyzer.n_fft,
-                                 hop_length=analyzer.n_hop,
-                                 window=np.hanning(analyzer.n_fft + 2)[1:-1]))
+        d, sr = audio.audio_read(filename, sr=analyzer_obj.target_sr, channels=1)
+        sgram = np.abs(stft.stft(d, n_fft=analyzer_obj.n_fft,
+                                 hop_length=analyzer_obj.n_hop,
+                                 window=np.hanning(analyzer_obj.n_fft + 2)[1:-1]))
         sgram = 20.0 * np.log10(np.maximum(sgram, np.max(sgram) / 1e6))
         sgram = sgram - np.mean(sgram)
         # High-pass filter onset emphasis
@@ -463,21 +461,21 @@ class Matcher(object):
                                                    [1, -HPF_POLE], s_row)
                               for s_row in sgram])[:-1, ]
         sgram = sgram - np.max(sgram)
-        librosa.display.specshow(sgram, sr=sr, hop_length=analyzer.n_hop,
+        librosa.display.specshow(sgram, sr=sr, hop_length=analyzer_obj.n_hop,
                                  y_axis='linear', x_axis='time',
                                  cmap='gray_r', vmin=-80.0, vmax=0)
         # Do the match?
-        q_hashes = analyzer.wavfile2hashes(filename)
+        q_hashes = analyzer_obj.wavfile2hashes(filename)
         # Run query, get back the hashes for match zero
         results, matchhashes = self.match_hashes(ht, q_hashes, hashesfor=0)
         if self.sort_by_time:
             results = sorted(results, key=lambda x: -x[2])
         # Convert the hashes to landmarks
-        lms = audfprint_analyze.hashes2landmarks(q_hashes)
-        mlms = audfprint_analyze.hashes2landmarks(matchhashes)
+        lms = analyzer.hashes2landmarks(q_hashes)
+        mlms = analyzer.hashes2landmarks(matchhashes)
         # Overplot on the spectrogram
-        time_scale = analyzer.n_hop / float(sr)
-        freq_scale = float(sr)/analyzer.n_fft
+        time_scale = analyzer_obj.n_hop / float(sr)
+        freq_scale = float(sr)/analyzer_obj.n_fft
         plt.plot(time_scale * np.array([[x[0], x[0] + x[3]] for x in lms]).T,
                  freq_scale * np.array([[x[1], x[2]] for x in lms]).T,
                  '.-g')
@@ -501,9 +499,9 @@ def localtest() -> None:
     """Function to provide quick test"""
     pat = '/Users/dpwe/projects/shazam/Nine_Lives/*mp3'
     qry = 'query.mp3'
-    hash_tab = audfprint_analyze.glob2hashtable(pat)
+    hash_tab = analyzer.glob2hashtable(pat)
     matcher = Matcher()
-    rslts, dur, nhash = matcher.match_file(audfprint_analyze.g2h_analyzer,
+    rslts, dur, nhash = matcher.match_file(analyzer.g2h_analyzer,
                                            hash_tab, qry)
     t_hop = 0.02322
     logger.debug(

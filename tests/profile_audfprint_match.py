@@ -2,12 +2,11 @@
 import cProfile
 import pstats
 
-# noinspection PyUnresolvedReferences
-import audfprint
+from audfprint import cli
 
 argv = ["match", "-d", "tmp.fpdb.hdf", "data/query.mp3"]
 
-cProfile.run('audfprint.main(argv)', 'fpmstats')
+cProfile.run('cli.main(argv)', 'fpmstats')
 
 p = pstats.Stats('fpmstats')
 
