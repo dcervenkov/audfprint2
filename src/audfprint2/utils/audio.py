@@ -27,6 +27,7 @@
 # PERFORMANCE OF THIS SOFTWARE.
 
 import os
+import queue
 import re
 import subprocess
 import threading
@@ -39,9 +40,6 @@ import numpy as np
 
 # For wavread fallback.
 import scipy.io.wavfile as wav  # type: ignore[import-untyped]
-
-import queue
-
 
 # If ffmpeg is unavailable, you can set HAVE_FFMPEG to False which will cause
 # soundfile reads to go via scipy.io.wavfile.  However, this means that only
