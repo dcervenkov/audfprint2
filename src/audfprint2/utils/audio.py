@@ -118,7 +118,7 @@ def audio_read_ffmpeg(
 
         if not len(frames):
             # Zero-length read
-            y = np.zeros(0, dtype=dtype)
+            y: np.ndarray = np.zeros(0, dtype=dtype)
         else:
             y = np.concatenate(frames)
             if channels > 1:

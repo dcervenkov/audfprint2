@@ -25,6 +25,8 @@ plot = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "librosa" },
+    { name = "matplotlib" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -46,6 +48,8 @@ provides-extras = ["plot"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "librosa", specifier = ">=0.11.0,<1.0" },
+    { name = "matplotlib", specifier = ">=3.9.4,<4.0" },
     { name = "mypy", specifier = ">=1.18.2" },
     { name = "pytest", specifier = ">=8.4.2" },
     { name = "pytest-asyncio", specifier = ">=0.24.0" },

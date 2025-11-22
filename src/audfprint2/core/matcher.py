@@ -7,6 +7,7 @@ Fingerprint matching code for audfprint2
 2014-05-26 Dan Ellis dpwe@ee.columbia.edu
 """
 
+import logging
 import os
 import time
 from typing import cast
@@ -14,8 +15,6 @@ from typing import cast
 import numpy as np
 import psutil  # type: ignore[import-untyped]
 import scipy.signal  # type: ignore[import-untyped]
-
-import logging
 
 from audfprint2.core import analyzer, hash_table
 from audfprint2.utils import audio, stft
@@ -460,8 +459,8 @@ class Matcher(object):
                               for s_row in sgram])[:-1, ]
         sgram = sgram - np.max(sgram)
         try:
-            import librosa.display
-            import matplotlib.pyplot as plt
+            import librosa.display  # type: ignore[import-not-found]
+            import matplotlib.pyplot as plt  # type: ignore[import-not-found]
         except Exception as exc:
             raise RuntimeError(
                 "Plotting requires optional dependencies; install with "
