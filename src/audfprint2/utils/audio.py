@@ -56,7 +56,7 @@ def wavread(filename: str) -> tuple[np.ndarray, int]:
     # Read in wav file.
     samplerate, wave_data = wav.read(filename)
     # Normalize short ints to floats in range [-1..1).
-    data = np.asfarray(wave_data) / 32768.0
+    data = np.asarray(wave_data, dtype=np.float64) / 32768.0
     return data, samplerate
 
 
