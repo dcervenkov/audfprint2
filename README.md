@@ -78,7 +78,7 @@ uv run ruff format
 uv run ruff check
 ```
 
-This version uses `ffmpeg` to read input files.  You must have a working `ffmpeg` binary in your path (try `ffmpeg -V` at the command prompt).
+This version uses `ffmpeg` to read input files.  You must have a working `ffmpeg` binary in your path (try `ffmpeg -V` at the command prompt). If `ffmpeg` is installed in a non-standard location, point audfprint2 at it with `--ffmpeg-path /full/path/to/ffmpeg` or by setting the environment variable `AUDFPRINT_FFMPEG`.
 
 Based on Matlab prototype, http://www.ee.columbia.edu/~dpwe/resources/matlab/audfprint/ .  This python code will actually read and use databases created by the Matlab code (version 0.90 upwards).
 

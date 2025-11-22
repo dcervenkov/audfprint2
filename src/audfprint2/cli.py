@@ -378,6 +378,7 @@ def setup_analyzer(
     shifts: int,
     samplerate: int,
     continue_on_error: bool,
+    ffmpeg_path: str | None,
 ) -> analyzer.Analyzer:
     """Create a new analyzer object, taking values from docopts args"""
     # Create analyzer object; parameters will get set below
@@ -397,6 +398,7 @@ def setup_analyzer(
         # Default shift is 4 for match, otherwise 1
         analyzer_obj.shifts = 4 if is_match else 1
     analyzer_obj.fail_on_error = not continue_on_error
+    analyzer_obj.ffmpeg_path = ffmpeg_path
     return analyzer_obj
 
 
@@ -468,6 +470,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-r", "--samplerate", type=int, default=11025,
         help="Resample input files to this"
+    )
+    parser.add_argument(
+        "--ffmpeg-path",
+        default=None,
+        help="Explicit path to ffmpeg binary (overrides PATH)",
     )
     parser.add_argument(
         "-p", "--precompdir", default=".",
@@ -595,6 +602,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         args.shifts,
         args.samplerate,
         args.continue_on_error,
+        args.ffmpeg_path,
     ) if args.cmd not in ["merge", "newmerge", "list", "remove"] else None
 
     precomp_type = 'peaks' if args.precompute_peaks else 'hashes'

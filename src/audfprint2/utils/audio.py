@@ -47,6 +47,16 @@ import scipy.io.wavfile as wav  # type: ignore[import-untyped]
 # system sampling rate (e.g. 11025 Hz).
 
 HAVE_FFMPEG = True
+DEFAULT_FFMPEG_BINARY = "ffmpeg"
+# Allow overriding the ffmpeg binary via environment variable so users can provide
+# a custom installation without modifying PATH.
+FFMPEG_BINARY = os.environ.get("AUDFPRINT_FFMPEG", DEFAULT_FFMPEG_BINARY)
+
+
+def set_ffmpeg_path(ffmpeg_path: str) -> None:
+    """Set the global ffmpeg binary path used by audio readers."""
+    global FFMPEG_BINARY
+    FFMPEG_BINARY = ffmpeg_path
 
 
 def wavread(filename: str) -> tuple[np.ndarray, int]:
@@ -62,10 +72,11 @@ def audio_read(
     filename: str,
     sr: int | None = None,
     channels: int | None = None,
+    ffmpeg_path: str | None = None,
 ) -> tuple[np.ndarray, int]:
     """Read a soundfile, return (d, sr)."""
     if HAVE_FFMPEG:
-        return audio_read_ffmpeg(filename, sr, channels)
+        return audio_read_ffmpeg(filename, sr, channels, ffmpeg_path=ffmpeg_path)
     data, samplerate = wavread(filename)
     if channels == 1 and len(data.shape) == 2 and data.shape[-1] != 1:
         # Convert stereo to mono.
@@ -79,6 +90,7 @@ def audio_read_ffmpeg(
     filename: str,
     sr: int | None = None,
     channels: int | None = None,
+    ffmpeg_path: str | None = None,
 ) -> tuple[np.ndarray, int]:
     """Read a soundfile, return (d, sr)."""
     # Hacked version of librosa.load and audioread/ff.
@@ -86,7 +98,12 @@ def audio_read_ffmpeg(
     duration = None
     dtype = np.float32
     frames: list[np.ndarray] = []
-    with FFmpegAudioFile(os.path.realpath(filename), sample_rate=sr, channels=channels) as input_file:
+    with FFmpegAudioFile(
+        os.path.realpath(filename),
+        sample_rate=sr,
+        channels=channels,
+        ffmpeg_path=ffmpeg_path,
+    ) as input_file:
         sr = input_file.sample_rate
         channels = input_file.channels
         if sr is None or channels is None:
@@ -212,10 +229,12 @@ class FFmpegAudioFile(object):
         channels: int | None = None,
         sample_rate: int | None = None,
         block_size: int = 4096,
+        ffmpeg_path: str | None = None,
     ) -> None:
         if not os.path.isfile(filename):
             raise ValueError(f"{filename} not found.")
-        popen_args = ["ffmpeg", "-i", filename, "-f", "s16le"]
+        ffmpeg_bin = ffmpeg_path or FFMPEG_BINARY
+        popen_args = [ffmpeg_bin, "-i", filename, "-f", "s16le"]
         self.channels = channels
         self.sample_rate = sample_rate
         if channels:

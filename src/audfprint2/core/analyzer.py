@@ -152,6 +152,8 @@ class Analyzer(object):
         self.soundfilecount = 0
         # Control behavior on file reading error
         self.fail_on_error = True
+        # Optional override for ffmpeg binary location
+        self.ffmpeg_path: str | None = None
 
     def spreadpeaksinvector(self, vector: np.ndarray, width: float = 4.0) -> np.ndarray:
         """ Create a blurred version of vector, where each of the local maxes
@@ -376,7 +378,12 @@ class Analyzer(object):
         else:
             try:
                 # [d, sr] = librosa.load(filename, sr=self.target_sr)
-                d, sr = audio.audio_read(filename, sr=self.target_sr, channels=1)
+                d, sr = audio.audio_read(
+                    filename,
+                    sr=self.target_sr,
+                    channels=1,
+                    ffmpeg_path=self.ffmpeg_path,
+                )
             except Exception as e:  # audioread.NoBackendError:
                 message = f"wavfile2peaks: Error reading {filename}"
                 if self.fail_on_error:

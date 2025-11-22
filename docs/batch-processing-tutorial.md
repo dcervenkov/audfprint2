@@ -6,7 +6,7 @@ It assumes we are running on a Linux or macOS host, with the relevant data files
 
 ## Prerequisites
 
-This version of audfprint relies on `ffmpeg` to read audio files.  You should check that you have a working version by typing `ffmpeg -version` at the command prompt.  If the command is not found, you should install it with something like `sudo apt-get install ffmpeg` (for Ubuntu) or `brew install ffmpeg` (for Macs with [homebrew](http://brew.sh) installed).
+This version of audfprint relies on `ffmpeg` to read audio files.  You should check that you have a working version by typing `ffmpeg -version` at the command prompt.  If the command is not found, you should install it with something like `sudo apt-get install ffmpeg` (for Ubuntu) or `brew install ffmpeg` (for Macs with [homebrew](http://brew.sh) installed). When `ffmpeg` lives outside your `PATH`, pass `--ffmpeg-path /full/path/to/ffmpeg` to the CLI or set the environment variable `AUDFPRINT_FFMPEG`.
 
 Install [uv](https://github.com/astral-sh/uv) and set up the project dependencies:
 

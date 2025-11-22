@@ -121,6 +121,35 @@ def test_audio_read_ffmpeg_converts_frames(monkeypatch):
     assert np.max(np.abs(data)) <= 1.0
 
 
+def test_ffmpeg_path_override(monkeypatch, tmp_path):
+    """FFmpegAudioFile should respect an explicit ffmpeg binary path."""
+
+    wav_path = tmp_path / "fake.wav"
+    wav_path.write_bytes(b"00")
+    custom_ffmpeg = tmp_path / "bin" / "ffmpeg"
+    custom_ffmpeg.parent.mkdir(parents=True)
+    custom_ffmpeg.write_text("binary")
+
+    stderr_lines = [
+        b"ffmpeg version",
+        b"Duration: 00:00:01.0, start: 0.000000, bitrate: 705 kb/s",
+        b"Audio: pcm_s16le, 44100 Hz, stereo, s16, 1411 kb/s",
+    ]
+
+    popen_args = {}
+
+    def fake_popen(args, **kwargs):
+        popen_args["cmd"] = args
+        return DummyProcess(stderr_lines)
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+
+    fobj = audio.FFmpegAudioFile(str(wav_path), ffmpeg_path=str(custom_ffmpeg))
+    fobj.close()
+
+    assert popen_args["cmd"][0] == str(custom_ffmpeg)
+
+
 def test_buf_to_float_scaling():
     """buf_to_float should scale integer buffers to [-1, 1) floats."""
 

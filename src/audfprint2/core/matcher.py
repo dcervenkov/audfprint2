@@ -443,7 +443,12 @@ class Matcher(object):
             plotted over a spectrogram """
         # Make the spectrogram
         # d, sr = librosa.load(filename, sr=analyzer.target_sr)
-        d, sr = audio.audio_read(filename, sr=analyzer_obj.target_sr, channels=1)
+        d, sr = audio.audio_read(
+            filename,
+            sr=analyzer_obj.target_sr,
+            channels=1,
+            ffmpeg_path=analyzer_obj.ffmpeg_path,
+        )
         sgram = np.abs(stft.stft(d, n_fft=analyzer_obj.n_fft,
                                  hop_length=analyzer_obj.n_hop,
                                  window=np.hanning(analyzer_obj.n_fft + 2)[1:-1]))
